@@ -1,0 +1,16 @@
+{
+  "name": "@agentgpt/protocol-types",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AgentGPT NDJSON/WS protocol schemas (source of truth)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}

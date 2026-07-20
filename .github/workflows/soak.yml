@@ -1,0 +1,26 @@
+name: Leak soak (nightly)
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # nightly
+  workflow_dispatch:
+
+jobs:
+  rss-soak:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agentgpt/ui build
+      - run: uv sync --directory apps/agent-runtime
+      - run: cargo build -p agentgpt-host
+      - name: RSS soak (200 cycles)
+        run: bash tests/soak/rss_soak.sh 200 30 50
