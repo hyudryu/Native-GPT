@@ -18,8 +18,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import StatusPill from "../components/StatusPill";
 import ThemeToggle from "../components/ThemeToggle";
+import WindowTitleBar from "../components/WindowTitleBar";
 import { dialogBackdropCls, dialogPopupCls } from "../components/dialogStyles";
 import { conversationMarkdown, safeExportName } from "../lib/conversationExport";
 import {
@@ -418,8 +418,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         >
           <Settings className="size-5" aria-hidden /> Settings
         </NavLink>
-        <div className="flex items-center justify-between px-2">
-          <StatusPill />
+        <div className="flex items-center justify-end px-2">
           <ThemeToggle />
         </div>
       </div>
@@ -533,7 +532,6 @@ function CompactRail() {
       <NavLink to="/settings" aria-label="Settings" className={iconButton}>
         <Settings className="size-5" aria-hidden />
       </NavLink>
-      <StatusPill compact />
       <ThemeToggle />
     </div>
   );
@@ -545,60 +543,62 @@ export default function AppShell() {
   const cycle = useRailModeStore((state) => state.cycle);
 
   return (
-    <div className="flex h-dvh bg-surface-0 text-fg">
-      <div
-        data-tauri-drag-region
-        aria-hidden
-        className="fixed inset-x-0 top-0 z-30 hidden h-2 lg:block"
-      />
-      <aside
-        aria-label="Sidebar"
-        aria-hidden={mode === "hidden"}
-        className={`hidden shrink-0 overflow-hidden border-border transition-[width] duration-[var(--duration-base)] lg:block ${
-          mode === "hidden" ? "w-0 border-r-0" : mode === "full" ? "w-72 border-r" : "w-20 border-r"
-        }`}
-      >
-        {mode === "full" && <SidebarContent />}
-        {mode === "compact" && <CompactRail />}
-      </aside>
+    <div className="flex h-dvh flex-col bg-surface-0 text-fg">
+      <WindowTitleBar />
+      <div className="flex min-h-0 flex-1">
+        <aside
+          aria-label="Sidebar"
+          aria-hidden={mode === "hidden"}
+          className={`hidden shrink-0 overflow-hidden border-border transition-[width] duration-[var(--duration-base)] lg:block ${
+            mode === "hidden" ? "w-0 border-r-0" : mode === "full" ? "w-72 border-r" : "w-20 border-r"
+          }`}
+        >
+          {mode === "full" && <SidebarContent />}
+          {mode === "compact" && <CompactRail />}
+        </aside>
 
-      {mode === "hidden" && (
-        <button type="button" onClick={cycle} aria-label="Show sidebar" className="fixed left-3 top-3 z-30 hidden min-h-11 min-w-11 items-center justify-center rounded-full border border-border bg-surface-1 text-fg-muted shadow-md hover:text-fg lg:inline-flex">
-          <PanelLeft className="size-5" aria-hidden />
-        </button>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-1 border-b border-border bg-surface-1 px-2 lg:hidden" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-          <button type="button" aria-label="Open menu" onClick={() => setSheetOpen(true)} className={iconButton}>
-            <Menu className="size-5" aria-hidden />
+        {mode === "hidden" && (
+          <button
+            type="button"
+            onClick={cycle}
+            aria-label="Show sidebar"
+            className="fixed left-3 top-12 z-30 hidden min-h-11 min-w-11 items-center justify-center rounded-full border border-border bg-surface-1 text-fg-muted shadow-md hover:text-fg lg:inline-flex"
+          >
+            <PanelLeft className="size-5" aria-hidden />
           </button>
-          <span className="ml-1 text-base font-semibold tracking-tight">Native GPT</span>
-          <div className="flex-1" />
-          <StatusPill />
-          <ThemeToggle />
-        </header>
-        <main className="min-h-0 flex-1 overflow-hidden"><Outlet /></main>
-        <nav aria-label="Primary" className="flex items-stretch border-t border-border bg-surface-1 px-2 lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-          <NavLink to="/" className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><SquarePen className="size-5" aria-hidden />New</NavLink>
-          <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><MessageSquare className="size-5" aria-hidden />Chats</button>
-          <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Folder className="size-5" aria-hidden />Workspaces</button>
-          <NavLink to="/settings" className={({ isActive }) => `flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${isActive ? "text-accent" : "text-fg-subtle"}`}><Settings className="size-5" aria-hidden />Settings</NavLink>
-        </nav>
-      </div>
+        )}
 
-      <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}>
-        <Dialog.Portal>
-          <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
-          <Dialog.Popup aria-label="Menu" className="fixed inset-y-0 left-0 z-50 h-dvh w-72 max-w-[85vw] bg-surface-3 shadow-lg transition-transform data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full">
-            <Dialog.Title className="sr-only">Navigation</Dialog.Title>
-            <Dialog.Close aria-label="Close menu" className="absolute right-2 top-2 z-10 inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-fg-muted hover:bg-surface-2 hover:text-fg">
-              <X className="size-5" aria-hidden />
-            </Dialog.Close>
-            <SidebarContent onNavigate={() => setSheetOpen(false)} />
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex items-center gap-1 border-b border-border bg-surface-1 px-2 lg:hidden" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+            <button type="button" aria-label="Open menu" onClick={() => setSheetOpen(true)} className={iconButton}>
+              <Menu className="size-5" aria-hidden />
+            </button>
+            <span className="ml-1 text-base font-semibold tracking-tight">Native GPT</span>
+            <div className="flex-1" />
+            <ThemeToggle />
+          </header>
+          <main className="min-h-0 flex-1 overflow-hidden"><Outlet /></main>
+          <nav aria-label="Primary" className="flex items-stretch border-t border-border bg-surface-1 px-2 lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+            <NavLink to="/" className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><SquarePen className="size-5" aria-hidden />New</NavLink>
+            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><MessageSquare className="size-5" aria-hidden />Chats</button>
+            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Folder className="size-5" aria-hidden />Workspaces</button>
+            <NavLink to="/settings" className={({ isActive }) => `flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${isActive ? "text-accent" : "text-fg-subtle"}`}><Settings className="size-5" aria-hidden />Settings</NavLink>
+          </nav>
+        </div>
+
+        <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}>
+          <Dialog.Portal>
+            <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+            <Dialog.Popup aria-label="Menu" className="fixed inset-y-0 left-0 z-50 h-dvh w-72 max-w-[85vw] bg-surface-3 shadow-lg transition-transform data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full">
+              <Dialog.Title className="sr-only">Navigation</Dialog.Title>
+              <Dialog.Close aria-label="Close menu" className="absolute right-2 top-2 z-10 inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-fg-muted hover:bg-surface-2 hover:text-fg">
+                <X className="size-5" aria-hidden />
+              </Dialog.Close>
+              <SidebarContent onNavigate={() => setSheetOpen(false)} />
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
+      </div>
     </div>
   );
 }

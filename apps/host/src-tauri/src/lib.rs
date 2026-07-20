@@ -165,6 +165,11 @@ fn run_desktop(port: u16) {
             )
             .title("AgentGPT")
             .decorations(false)
+            .resizable(true)
+            .minimizable(true)
+            .maximizable(true)
+            .closable(true)
+            .shadow(true)
             .inner_size(1280.0, 800.0)
             .build()?;
             Ok(())
