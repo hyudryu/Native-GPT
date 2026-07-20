@@ -22,6 +22,8 @@ pub struct AppState {
     pub tailscale_ips: Vec<Ipv4Addr>,
     /// `apps/ui/dist` directory (may not exist yet).
     pub ui_dist: PathBuf,
+    /// Repository root containing the built-in `/tools` folders.
+    pub repo_root: PathBuf,
     pub supervisor: Supervisor,
     pub telemetry: Telemetry,
     pub db: Db,
@@ -60,6 +62,7 @@ fn make_test_state(token: &str, sidecar: agentgpt_supervisor::SupervisorConfig) 
         started: Instant::now(),
         tailscale_ips: Vec::new(),
         ui_dist: std::env::temp_dir().join("agentgpt-test-ui-dist"),
+        repo_root: dir.clone(),
         supervisor: Supervisor::new(sidecar),
         telemetry: Telemetry::new(),
         db,

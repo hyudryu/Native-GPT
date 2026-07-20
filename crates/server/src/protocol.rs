@@ -121,6 +121,8 @@ pub struct RunStart {
     pub history: Vec<ChatMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled_tools: Vec<String>,
     pub model: RunModel,
 }
 
