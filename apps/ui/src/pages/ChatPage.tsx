@@ -23,6 +23,7 @@ import {
   type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
 
 function ModelPicker({
   models,
@@ -442,6 +443,7 @@ export default function ChatPage() {
           )}
           {messages.data?.map((message) => {
             const user = message.role === "user";
+            const text = messageText(message.content ?? message.content_json);
             return (
               <article
                 key={message.id}
@@ -452,7 +454,9 @@ export default function ChatPage() {
                     : "mr-auto border border-border bg-surface-1 text-fg"
                 }`}
               >
-                {messageText(message.content ?? message.content_json)}
+                {user
+                  ? <PlainMessage content={text} />
+                  : <MarkdownMessage content={text} />}
               </article>
             );
           })}
@@ -462,7 +466,7 @@ export default function ChatPage() {
               aria-live="polite"
               className="mr-auto max-w-[88%] whitespace-pre-wrap rounded-2xl border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
             >
-              {streamText || <span className="text-fg-subtle">Thinking…</span>}
+              {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
             </article>
           )}
           {(streamError || send.isError) && (
