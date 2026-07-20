@@ -546,6 +546,11 @@ export default function AppShell() {
 
   return (
     <div className="flex h-dvh bg-surface-0 text-fg">
+      <div
+        data-tauri-drag-region
+        aria-hidden
+        className="fixed inset-x-0 top-0 z-30 hidden h-2 lg:block"
+      />
       <aside
         aria-label="Sidebar"
         aria-hidden={mode === "hidden"}

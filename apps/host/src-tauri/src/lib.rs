@@ -164,6 +164,7 @@ fn run_desktop(port: u16) {
                 tauri::WebviewUrl::External(url.parse().expect("local URL is valid")),
             )
             .title("AgentGPT")
+            .decorations(false)
             .inner_size(1280.0, 800.0)
             .build()?;
             Ok(())

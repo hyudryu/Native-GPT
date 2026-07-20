@@ -78,8 +78,7 @@
   /* ---- color: accent (Apple system / Messages blue) ---- */
   --accent: #007aff;
   --accent-hover: #0065d1;
-  /* Black clears AA for normal text on #007aff; white does not. */
-  --accent-contrast: #000000;
+  --accent-contrast: #ffffff;
   --accent-subtle: #e5f2ff;
 
   /* ---- color: semantic ---- */
@@ -135,7 +134,7 @@
   /* accent (Apple dark-mode system blue) */
   --accent: #0a84ff;
   --accent-hover: #409cff;
-  --accent-contrast: #000000;
+  --accent-contrast: #ffffff;
   --accent-subtle: #082a4a;
 
   /* semantic */
