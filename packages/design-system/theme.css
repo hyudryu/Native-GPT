@@ -1,0 +1,88 @@
+/**
+ * Tailwind v4 theme for AgentGPT — CSS-first, no JS config.
+ *
+ * `@theme inline` keeps values as var() references to tokens.css so that
+ * switching `[data-theme]` on <html> re-themes every Tailwind utility at
+ * runtime without rebuilding CSS, and avoids re-emitting same-named
+ * variables into :root (which would create cyclic self-references).
+ *
+ * Usage in an app:
+ *   @import "@agentgpt/design-system/tokens.css";
+ *   @import "tailwindcss";
+ *   @import "@agentgpt/design-system/theme.css";
+ */
+
+@theme inline {
+  /* surfaces */
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  /* foreground */
+  --color-fg: var(--text-primary);
+  --color-fg-muted: var(--text-secondary);
+  --color-fg-subtle: var(--text-tertiary);
+  --color-fg-inverse: var(--text-inverse);
+
+  /* borders */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  /* accent */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-subtle: var(--accent-subtle);
+
+  /* semantic */
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+
+  /* focus ring */
+  --color-ring: var(--ring-color);
+
+  /* typography */
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  /* type scale */
+  --text-xs: var(--text-xs);
+  --text-xs--line-height: var(--text-xs--line-height);
+  --text-sm: var(--text-sm);
+  --text-sm--line-height: var(--text-sm--line-height);
+  --text-base: var(--text-base);
+  --text-base--line-height: var(--text-base--line-height);
+  --text-lg: var(--text-lg);
+  --text-lg--line-height: var(--text-lg--line-height);
+  --text-xl: var(--text-xl);
+  --text-xl--line-height: var(--text-xl--line-height);
+  --text-2xl: var(--text-2xl);
+  --text-2xl--line-height: var(--text-2xl--line-height);
+  --text-3xl: var(--text-3xl);
+  --text-3xl--line-height: var(--text-3xl--line-height);
+
+  /* radii */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+
+  /* elevations → shadow utilities */
+  --shadow-sm: var(--elevation-1);
+  --shadow-md: var(--elevation-2);
+  --shadow-lg: var(--elevation-3);
+}
+
+@theme {
+  /* literal, theme-independent values */
+  --spacing: 0.25rem;
+  --breakpoint-lg: 64rem; /* 1024px: desktop nav rail vs mobile bottom nav */
+}

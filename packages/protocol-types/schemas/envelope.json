@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgpt.local/schemas/envelope.json",
+  "title": "AgentGPT Protocol Envelope",
+  "description": "Base envelope for every message: host<->sidecar NDJSON (stdio) and UI<->host WebSocket. Versioned per source plan section 16.",
+  "type": "object",
+  "required": ["protocol", "type", "request_id", "timestamp", "payload"],
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Protocol version. Mismatched major versions are rejected at handshake."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z_]+)+$",
+      "description": "Message type, e.g. runtime.hello, run.text_delta"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Correlates requests, responses, and event streams. UUIDv7 recommended."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per request_id; present on streaming events only."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

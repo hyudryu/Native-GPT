@@ -1,0 +1,67 @@
+//! Test double for the Python sidecar: echoes NDJSON requests back as
+//! `<type>.ok` responses with the same `request_id` and kind-specific
+//! payloads. Used by supervisor/server integration tests; not shipped.
+
+use std::io::{BufRead, Write};
+
+use agentgpt_supervisor::protocol::Envelope;
+
+fn main() {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(env) = serde_json::from_str::<Envelope>(&line) else {
+            continue;
+        };
+        if env.kind == "runtime.shutdown" {
+            // Exit without replying, like a cooperative sidecar would.
+            std::process::exit(0);
+        }
+        let payload = match env.kind.as_str() {
+            "endpoint.test" => serde_json::json!({
+                "ok": true,
+                "latency_ms": 2.5,
+                "server": "fake-sidecar"
+            }),
+            "models.list" => serde_json::json!({
+                "models": [
+                    {"id": "fake-model-1", "raw": {"owned_by": "fake"}},
+                    {"id": "fake-model-2"}
+                ],
+                "fetched_at": chrono::Utc::now().to_rfc3339()
+            }),
+            "run.start" => serde_json::json!({
+                "run_id": env.payload["run_id"],
+                "conversation_id": env.payload["conversation_id"]
+            }),
+            "run.cancel" => serde_json::json!({
+                "run_id": env.payload["run_id"]
+            }),
+            _ => serde_json::json!({"status": "ok", "uptime_seconds": 1.0, "rss_bytes": 1024}),
+        };
+        let mut resp = Envelope::new(format!("{}.ok", env.kind), payload);
+        resp.request_id = env.request_id.clone();
+        let mut out = stdout.lock();
+        if writeln!(out, "{}", serde_json::to_string(&resp).unwrap()).is_err() {
+            break;
+        }
+        if env.kind == "run.start" {
+            for (kind, payload) in [
+                (
+                    "run.text_delta",
+                    serde_json::json!({"run_id": env.payload["run_id"], "text": "fake reply"}),
+                ),
+                (
+                    "run.completed",
+                    serde_json::json!({"run_id": env.payload["run_id"]}),
+                ),
+            ] {
+                let mut event = Envelope::new(kind, payload);
+                event.request_id = env.request_id.clone();
+                let _ = writeln!(out, "{}", serde_json::to_string(&event).unwrap());
+            }
+        }
+        let _ = out.flush();
+    }
+}

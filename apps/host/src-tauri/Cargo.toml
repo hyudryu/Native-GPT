@@ -1,0 +1,22 @@
+[package]
+name = "agentgpt-host"
+description = "AgentGPT Desktop host (Tauri shell + embedded axum server)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+name = "agentgpt_host_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+agentgpt-server.workspace = true
+tauri.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

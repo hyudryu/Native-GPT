@@ -1,0 +1,15 @@
+[package]
+name = "agentgpt-telemetry"
+description = "sysinfo-based process/system telemetry for the AgentGPT host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# NVIDIA NVML GPU telemetry. Real implementation lands with the GPU watchdog;
+# the stub below reports `Unavailable` either way.
+nvml = []
+
+[dependencies]
+sysinfo.workspace = true

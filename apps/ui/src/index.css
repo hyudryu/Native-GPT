@@ -1,0 +1,28 @@
+@import "@agentgpt/design-system/tokens.css";
+@import "tailwindcss";
+@import "@agentgpt/design-system/theme.css";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+  -webkit-font-smoothing: antialiased;
+  /* iOS standalone: don't rubber-band the whole app */
+  overscroll-behavior: none;
+}
+
+*:focus-visible {
+  outline: var(--ring-width) solid var(--ring-color);
+  outline-offset: var(--ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-subtle);
+}

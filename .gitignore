@@ -1,0 +1,32 @@
+# Node
+node_modules/
+dist/
+*.local
+
+# Rust
+target/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# App data / secrets
+app-data/
+*.sqlite3
+*.sqlite3-*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Env
+.env
+.env.*

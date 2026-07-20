@@ -1,0 +1,368 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { authFetch } from "./auth";
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string | null;
+  instructions?: string | null;
+  endpoint_id?: string | null;
+  model_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Conversation {
+  id: string;
+  project_id?: string | null;
+  title: string;
+  instructions?: string | null;
+  provider_id?: string | null;
+  endpoint_id?: string | null;
+  model_id?: string | null;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  /** Accepted defensively for older persisted payloads. */
+  content_json?: unknown;
+  status?: string;
+  created_at?: string;
+}
+
+export interface EnabledModel {
+  provider_id: string;
+  provider_name: string;
+  model_id: string;
+}
+
+export interface SearchResult {
+  conversation_id: string;
+  title: string;
+  snippet: string;
+  project_id?: string | null;
+}
+
+export interface RunRef {
+  id: string;
+  request_id: string;
+}
+
+class DataApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DataApiError";
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await authFetch(path, { ...init, headers });
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as {
+        error?: { message?: string };
+        message?: string;
+      };
+      message = body.error?.message ?? body.message ?? message;
+    } catch {
+      // Keep the status-based fallback for empty/non-JSON bodies.
+    }
+    throw new DataApiError(response.status, message);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        typeof part === "string"
+          ? part
+          : part && typeof part === "object" && "text" in part
+            ? String((part as { text: unknown }).text ?? "")
+            : "",
+      )
+      .join("");
+  }
+  if (content && typeof content === "object") {
+    const object = content as Record<string, unknown>;
+    if (typeof object.text === "string") return object.text;
+    if (typeof object.content === "string") return object.content;
+    if (Array.isArray(object.content)) return messageText(object.content);
+  }
+  return "";
+}
+
+export function modelOptionValue(model: Pick<EnabledModel, "provider_id" | "model_id">): string {
+  return `${encodeURIComponent(model.provider_id)}:${encodeURIComponent(model.model_id)}`;
+}
+
+export function parseModelOptionValue(value: string): {
+  provider_id: string;
+  model_id: string;
+} | null {
+  const separator = value.indexOf(":");
+  if (separator < 0) return null;
+  try {
+    return {
+      provider_id: decodeURIComponent(value.slice(0, separator)),
+      model_id: decodeURIComponent(value.slice(separator + 1)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function listProjects(): Promise<Project[]> {
+  return (await request<{ projects: Project[] }>("/api/projects")).projects;
+}
+
+export async function createProject(input: Pick<Project, "name"> & Partial<Project>): Promise<Project> {
+  return (
+    await request<{ project: Project }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  ).project;
+}
+
+export async function updateProject(id: string, input: Partial<Project>): Promise<Project> {
+  return (
+    await request<{ project: Project }>(`/api/projects/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  ).project;
+}
+
+export function deleteProject(id: string): Promise<void> {
+  return request(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listConversations(): Promise<Conversation[]> {
+  return (await request<{ conversations: Conversation[] }>("/api/conversations"))
+    .conversations;
+}
+
+export async function getConversation(id: string): Promise<Conversation> {
+  return (
+    await request<{ conversation: Conversation }>(
+      `/api/conversations/${encodeURIComponent(id)}`,
+    )
+  ).conversation;
+}
+
+export async function createConversation(
+  input: Partial<Conversation> & Pick<Conversation, "title">,
+): Promise<Conversation> {
+  return (
+    await request<{ conversation: Conversation }>("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  ).conversation;
+}
+
+export async function updateConversation(
+  id: string,
+  input: Partial<Conversation>,
+): Promise<Conversation> {
+  return (
+    await request<{ conversation: Conversation }>(
+      `/api/conversations/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    )
+  ).conversation;
+}
+
+export function deleteConversation(id: string): Promise<void> {
+  return request(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function listMessages(conversationId: string): Promise<Message[]> {
+  return (
+    await request<{ messages: Message[] }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+    )
+  ).messages;
+}
+
+export async function sendMessage(
+  conversationId: string,
+  input: { content: string },
+): Promise<{ message: Message; run: RunRef }> {
+  return request(
+    `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export function cancelRun(id: string): Promise<void> {
+  return request(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
+export async function listEnabledModels(): Promise<EnabledModel[]> {
+  return (await request<{ models: EnabledModel[] }>("/api/models?enabled=true")).models;
+}
+
+export async function searchConversations(query: string): Promise<SearchResult[]> {
+  const data = await request<{
+    results?: SearchResult[];
+    conversations?: Conversation[];
+  }>(
+    `/api/search?q=${encodeURIComponent(query)}`,
+  );
+  return (
+    data.results ??
+    data.conversations?.map((conversation) => ({
+      conversation_id: conversation.id,
+      title: conversation.title,
+      snippet: "",
+      project_id: conversation.project_id,
+    })) ??
+    []
+  );
+}
+
+const projectsKey = ["projects"] as const;
+const conversationsKey = ["conversations"] as const;
+const conversationKey = (id: string) => ["conversations", id] as const;
+const messagesKey = (id: string) => ["conversations", id, "messages"] as const;
+
+export function useProjects() {
+  return useQuery({ queryKey: projectsKey, queryFn: listProjects, staleTime: 30_000 });
+}
+
+export function useCreateProject() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: createProject,
+    onSuccess: () => client.invalidateQueries({ queryKey: projectsKey }),
+  });
+}
+
+export function useUpdateProject() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Partial<Project> }) =>
+      updateProject(id, input),
+    onSuccess: () => client.invalidateQueries({ queryKey: projectsKey }),
+  });
+}
+
+export function useDeleteProject() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: deleteProject,
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: projectsKey });
+      void client.invalidateQueries({ queryKey: conversationsKey });
+    },
+  });
+}
+
+export function useConversations() {
+  return useQuery({
+    queryKey: conversationsKey,
+    queryFn: listConversations,
+    staleTime: 10_000,
+  });
+}
+
+export function useConversation(id: string | undefined) {
+  return useQuery({
+    queryKey: conversationKey(id ?? ""),
+    queryFn: () => getConversation(id!),
+    enabled: Boolean(id),
+  });
+}
+
+export function useCreateConversation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: createConversation,
+    onSuccess: () => client.invalidateQueries({ queryKey: conversationsKey }),
+  });
+}
+
+export function useUpdateConversation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Partial<Conversation> }) =>
+      updateConversation(id, input),
+    onSuccess: (conversation) => {
+      client.setQueryData(conversationKey(conversation.id), conversation);
+      void client.invalidateQueries({ queryKey: conversationsKey });
+    },
+  });
+}
+
+export function useDeleteConversation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: deleteConversation,
+    onSuccess: () => client.invalidateQueries({ queryKey: conversationsKey }),
+  });
+}
+
+export function useMessages(conversationId: string | undefined) {
+  return useQuery({
+    queryKey: messagesKey(conversationId ?? ""),
+    queryFn: () => listMessages(conversationId!),
+    enabled: Boolean(conversationId),
+  });
+}
+
+export function useSendMessage(conversationId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { content: string }) =>
+      sendMessage(conversationId, input),
+    onSuccess: ({ message }) => {
+      client.setQueryData<Message[]>(messagesKey(conversationId), (current = []) => {
+        if (current.some((item) => item.id === message.id)) return current;
+        return [...current, message];
+      });
+      void client.invalidateQueries({ queryKey: conversationsKey });
+    },
+  });
+}
+
+export function useCancelRun() {
+  return useMutation({ mutationFn: cancelRun });
+}
+
+export function useEnabledModels() {
+  return useQuery({
+    queryKey: ["models", "enabled"],
+    queryFn: listEnabledModels,
+    staleTime: 30_000,
+  });
+}
+
+export function useSearch(query: string) {
+  const normalized = query.trim();
+  return useQuery({
+    queryKey: ["search", normalized],
+    queryFn: () => searchConversations(normalized),
+    enabled: normalized.length >= 2,
+  });
+}
+
+export { DataApiError };

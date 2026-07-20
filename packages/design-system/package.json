@@ -1,0 +1,11 @@
+{
+  "name": "@agentgpt/design-system",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AgentGPT design tokens and Tailwind v4 theme",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./theme.css": "./theme.css"
+  }
+}

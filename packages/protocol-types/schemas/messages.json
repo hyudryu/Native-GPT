@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgpt.local/schemas/messages.json",
+  "title": "AgentGPT Protocol Message Catalog (Phase 0-2 subset)",
+  "description": "Payload schemas for the MVP message set. Types are grouped: runtime.* (lifecycle), run.* (agent runs), endpoint.*/models.* (model servers), event.* (host->UI broadcasts).",
+  "type": "object",
+  "$defs": {
+    "runtime.hello": {
+      "type": "object",
+      "required": ["client", "client_version"],
+      "properties": {
+        "client": { "type": "string" },
+        "client_version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "runtime.hello.ok": {
+      "type": "object",
+      "required": ["runtime", "runtime_version", "protocol"],
+      "properties": {
+        "runtime": { "type": "string" },
+        "runtime_version": { "type": "string" },
+        "protocol": { "type": "string", "const": "1.0" },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "runtime.health": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "runtime.health.ok": {
+      "type": "object",
+      "required": ["status", "uptime_seconds", "rss_bytes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["ok", "degraded"] },
+        "uptime_seconds": { "type": "number" },
+        "rss_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "runtime.shutdown": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "endpoint.test": {
+      "type": "object",
+      "required": ["base_url"],
+      "properties": {
+        "base_url": { "type": "string", "format": "uri" },
+        "api_key": { "type": "string", "description": "Raw key resolved by the host secret broker; never logged" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 120, "default": 15 }
+      },
+      "additionalProperties": false
+    },
+    "endpoint.test.ok": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "latency_ms": { "type": "number" },
+        "server": { "type": "string" },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "additionalProperties": false
+    },
+    "models.list": {
+      "type": "object",
+      "required": ["base_url"],
+      "properties": {
+        "base_url": { "type": "string", "format": "uri" },
+        "api_key": { "type": "string" },
+        "model_list_path": { "type": "string", "default": "/v1/models" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 120, "default": 15 }
+      },
+      "additionalProperties": false
+    },
+    "models.list.ok": {
+      "type": "object",
+      "required": ["models"],
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "raw": { "type": "object" }
+            }
+          }
+        },
+        "fetched_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "run.start": {
+      "type": "object",
+      "required": ["run_id", "conversation_id", "message_id", "prompt", "history", "model"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "conversation_id": { "type": "string" },
+        "message_id": { "type": "string" },
+        "prompt": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "content"],
+            "properties": {
+              "role": { "enum": ["user", "assistant"] },
+              "content": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "system_prompt": { "type": "string" },
+        "model": {
+          "type": "object",
+          "required": ["base_url", "model_id"],
+          "properties": {
+            "base_url": { "type": "string" },
+            "model_id": { "type": "string" },
+            "api_key": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "run.started": {
+      "type": "object",
+      "required": ["run_id", "conversation_id"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "conversation_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.cancel": {
+      "type": "object",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.cancelled": {
+      "type": "object",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.text_delta": {
+      "type": "object",
+      "required": ["run_id", "text"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.completed": {
+      "type": "object",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "usage": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "run.failed": {
+      "type": "object",
+      "required": ["run_id", "error"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" },
+            "retryable": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
