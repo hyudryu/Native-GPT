@@ -115,6 +115,10 @@
           }
         },
         "system_prompt": { "type": "string" },
+        "enabled_tools": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "model": {
           "type": "object",
           "required": ["base_url", "model_id"],

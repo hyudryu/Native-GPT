@@ -15,10 +15,14 @@ pub mod secrets;
 pub mod state;
 pub mod ws;
 
+mod analytics;
 mod chat;
 mod endpoints;
 mod handlers;
+mod knowledge;
 mod phase3;
+mod tools;
+mod updates;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -32,7 +36,7 @@ use axum::extract::Request;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use state::{AppState, SharedState};
 use tokio::net::TcpListener;
@@ -206,6 +210,7 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         started: Instant::now(),
         tailscale_ips: tailscale_ips.clone(),
         ui_dist: repo_root.join("apps/ui/dist"),
+        repo_root: repo_root.clone(),
         supervisor,
         telemetry: Telemetry::new(),
         db,
@@ -345,6 +350,16 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/runs/{id}/cancel", post(chat::cancel_run))
         .route("/api/search", get(phase3::search))
         .route("/api/models", get(phase3::list_models))
+        .route(
+            "/api/knowledge",
+            get(knowledge::list_sources).post(knowledge::ingest),
+        )
+        .route("/api/knowledge/search", get(knowledge::search))
+        .route("/api/knowledge/{id}", delete(knowledge::delete_source))
+        .route("/api/analytics/models", get(analytics::models))
+        .route("/api/tools", get(tools::list))
+        .route("/api/tools/{id}", patch(tools::patch))
+        .route("/api/updates/check", get(updates::check))
         .route("/ws", get(ws::ws_handler))
         .fallback_service(static_service)
         .layer(middleware::from_fn(cache_headers))

@@ -57,6 +57,7 @@ export interface RunStart {
   prompt: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   system_prompt?: string;
+  enabled_tools?: string[];
   model: { base_url: string; model_id: string; api_key?: string };
 }
 export interface RunStarted {

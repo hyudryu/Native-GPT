@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agentgpt_runtime.chat import ChatRuns, openai_base_url, strands_messages
+from agentgpt_runtime.chat import ChatRuns, openai_base_url, strands_messages, usage_from_result
 
 
 def test_openai_base_url_accepts_root_or_v1() -> None:
@@ -27,3 +27,19 @@ def test_cancel_unknown_run_returns_protocol_error() -> None:
     response = runs.cancel("missing", "request-1")
     assert response.type == "error"
     assert response.payload["code"] == "run_not_found"
+
+
+def test_usage_is_normalized_from_strands_metrics() -> None:
+    result = SimpleNamespace(
+        metrics=SimpleNamespace(
+            accumulated_usage={"inputTokens": 12, "outputTokens": 8, "totalTokens": 20},
+            accumulated_metrics={"latencyMs": 2000},
+        )
+    )
+    assert usage_from_result(result) == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+        "latency_ms": 2000.0,
+        "tokens_per_second": 4.0,
+    }
