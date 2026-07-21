@@ -74,6 +74,12 @@ export interface RunTextDelta {
   run_id: string;
   text: string;
 }
+/** A concise description of what the agent is doing before it has an answer. */
+export interface RunActivity {
+  run_id: string;
+  message: string;
+  source?: string;
+}
 export interface RunCompleted {
   run_id: string;
   usage?: Record<string, unknown>;
@@ -92,6 +98,7 @@ export interface RunFailed {
 export type StreamEventType =
   | "run.started"
   | "run.cancelled"
+  | "run.activity"
   | "run.text_delta"
   | "run.completed"
   | "run.failed"

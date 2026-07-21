@@ -166,6 +166,16 @@
       },
       "additionalProperties": false
     },
+    "run.activity": {
+      "type": "object",
+      "required": ["run_id", "message"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "message": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "run.completed": {
       "type": "object",
       "required": ["run_id"],

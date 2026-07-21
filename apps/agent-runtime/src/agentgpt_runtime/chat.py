@@ -146,6 +146,14 @@ class ChatRuns:
         active.agent = agent
         sequence = 0
         result = None
+        self._emit(
+            make_envelope(
+                "run.activity",
+                request_id,
+                {"run_id": payload.run_id, "message": "Thinking through the request"},
+            ).model_copy(update={"sequence": sequence})
+        )
+        sequence += 1
         async for event in agent.stream_async(payload.prompt):
             if active.cancelled.is_set():
                 agent.cancel()
@@ -153,6 +161,16 @@ class ChatRuns:
             text = event.get("data") if isinstance(event, dict) else None
             if isinstance(event, dict) and event.get("result") is not None:
                 result = event["result"]
+            activity = activity_from_event(event)
+            if activity is not None:
+                self._emit(
+                    make_envelope(
+                        "run.activity",
+                        request_id,
+                        {"run_id": payload.run_id, **activity},
+                    ).model_copy(update={"sequence": sequence})
+                )
+                sequence += 1
             if isinstance(text, str) and text:
                 self._emit(
                     make_envelope(
@@ -187,3 +205,17 @@ class ChatRuns:
                 {"run_id": payload.run_id, "usage": usage_from_result(result)},
             ).model_copy(update={"sequence": sequence})
         )
+
+
+def activity_from_event(event: object) -> dict[str, str] | None:
+    """Normalize the tool-use shapes emitted by supported Strands versions."""
+    if not isinstance(event, dict):
+        return None
+    for key in ("current_tool_use", "tool_use"):
+        tool_use = event.get(key)
+        if not isinstance(tool_use, dict):
+            continue
+        name = tool_use.get("name") or tool_use.get("tool_name")
+        if isinstance(name, str) and name.strip():
+            return {"message": f"Using {name.strip()}", "source": name.strip()}
+    return None
