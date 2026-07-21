@@ -17,6 +17,44 @@ fn test_config() -> SupervisorConfig {
 }
 
 #[tokio::test]
+async fn stdout_streaming_activity_prevents_idle_shutdown() {
+    // M2: a streaming run produces no requests, so without stdout-driven
+    // activity tracking the watchdog would kill the sidecar mid-stream.
+    let supervisor = Supervisor::new(SupervisorConfig {
+        idle_timeout: Duration::from_millis(400),
+        request_timeout: Duration::from_secs(10),
+        ..test_config()
+    });
+    let _watchdog = supervisor.start_idle_watchdog();
+
+    // fake_sidecar answers, then streams events for ~1s (8 x 120ms).
+    supervisor
+        .request(Envelope::new("test.stream", serde_json::json!({})))
+        .await
+        .expect("stream request");
+
+    // Well past the idle timeout, but still inside the streaming window:
+    // the sidecar must NOT have been shut down.
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(
+        supervisor.state(),
+        SidecarState::Running,
+        "streaming activity must keep the sidecar alive"
+    );
+
+    // After the stream ends (~1s), the idle timer fires and the watchdog
+    // shuts the sidecar down.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while supervisor.state() != SidecarState::NotSpawned {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "watchdog did not shut down the idle sidecar"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
 async fn lazy_spawn_request_response_round_trip() {
     let supervisor = Supervisor::new(test_config());
     assert_eq!(supervisor.state(), SidecarState::NotSpawned);

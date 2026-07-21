@@ -120,6 +120,11 @@ class ChatRuns:
             messages=strands_messages(payload.history),
             system_prompt=payload.system_prompt,
             tools=[],
+            # Strands' default callback handler PRINTS streamed text to stdout,
+            # which corrupts our NDJSON protocol channel (and crashes on
+            # non-ASCII under Windows cp1252). Replace it with a no-op —
+            # streaming is consumed from stream_async events below.
+            callback_handler=lambda **_: None,
         )
         active.agent = agent
         sequence = 0

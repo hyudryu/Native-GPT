@@ -207,7 +207,6 @@ export default function ChatPage() {
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
-  const contentKeyRef = useRef(0);
 
   // Landing from the new-conversation composer: send the first message
   // immediately so it streams live, then clear the navigation state.

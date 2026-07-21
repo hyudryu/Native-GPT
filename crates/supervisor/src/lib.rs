@@ -115,8 +115,25 @@ impl SupervisorError {
     }
 }
 
-/// Pending request/response correlation map: `request_id` -> reply channel.
-pub type PendingMap = DashMap<String, oneshot::Sender<Envelope>>;
+/// Pending request/response correlation map: `request_id` -> reply channel
+/// plus request metadata used for stream tracking.
+pub type PendingMap = DashMap<String, PendingRequest>;
+
+/// A pending request awaiting its terminal response.
+#[derive(Debug)]
+pub struct PendingRequest {
+    pub tx: oneshot::Sender<Envelope>,
+    /// Kind of the request (e.g. `run.start`).
+    pub kind: String,
+    /// `run_id` from a `run.start` payload, when present.
+    pub run_id: Option<String>,
+}
+
+/// Active run streams: stream `request_id` -> `run_id` (when known). A stream
+/// becomes active when a `run.start` ack is delivered (or a `run.*` event
+/// arrives for an untracked request_id) and ends on `run.completed` /
+/// `run.failed`. Used to synthesize `run.failed` on sidecar exit.
+pub type StreamMap = DashMap<String, Option<String>>;
 
 struct ChildHandle {
     child: Child,
@@ -127,6 +144,7 @@ struct Inner {
     config: SupervisorConfig,
     child: tokio::sync::Mutex<Option<ChildHandle>>,
     pending: PendingMap,
+    streams: StreamMap,
     events: broadcast::Sender<Envelope>,
     last_activity: tokio::sync::Mutex<Instant>,
     state: Mutex<SidecarState>,
@@ -166,6 +184,7 @@ impl Supervisor {
                 config,
                 child: tokio::sync::Mutex::new(None),
                 pending: DashMap::new(),
+                streams: DashMap::new(),
                 events,
                 last_activity: tokio::sync::Mutex::new(Instant::now()),
                 state: Mutex::new(SidecarState::NotSpawned),
@@ -229,6 +248,12 @@ impl Supervisor {
         self.inner.pid.store(0, Ordering::Relaxed);
         self.inner.set_state(SidecarState::NotSpawned);
         self.drain_pending("sidecar_shutdown", "sidecar was shut down");
+        fail_active_streams(
+            &self.inner.streams,
+            &self.inner.events,
+            "sidecar_shutdown",
+            "sidecar was shut down",
+        );
     }
 
     /// Spawn the idle-timeout watchdog task (ADR-0004). Event-driven: sleeps
@@ -270,6 +295,9 @@ impl Supervisor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // The NDJSON protocol channel is UTF-8; Windows consoles default
+            // to cp1252, which cannot encode much of typical model output.
+            .env("PYTHONIOENCODING", "utf-8")
             .kill_on_drop(true);
         // Do not pop up a console window for the sidecar on Windows.
         #[cfg(windows)]
@@ -298,14 +326,17 @@ impl Supervisor {
         drop(guard);
 
         // stdout reader: route responses to pending requests, broadcast events.
-        // EOF means the process exited -> clean up (event-driven, no polling).
+        // Any received line counts as activity (M2: streaming runs must not
+        // trip the idle watchdog). EOF means the process exited -> clean up
+        // (event-driven, no polling).
         let inner = self.inner.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
                 match lines.next_line().await {
                     Ok(Some(line)) => {
-                        route_incoming_line(&line, &inner.pending, &inner.events);
+                        *inner.last_activity.lock().await = Instant::now();
+                        route_incoming_line(&line, &inner.pending, &inner.streams, &inner.events);
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -315,7 +346,7 @@ impl Supervisor {
                 }
             }
             // Process exited (stdout EOF). Clear the handle if it is still the
-            // same child and fail all in-flight requests.
+            // same child and fail all in-flight requests and active streams.
             let was_current = {
                 let mut guard = inner.child.lock().await;
                 if guard.as_ref().and_then(|h| h.child.id()) == Some(pid) {
@@ -335,6 +366,12 @@ impl Supervisor {
                     inner: inner.clone(),
                 };
                 supervisor.drain_pending("sidecar_crashed", "sidecar process exited");
+                fail_active_streams(
+                    &inner.streams,
+                    &inner.events,
+                    "sidecar_crashed",
+                    "agent runtime exited unexpectedly",
+                );
             }
         });
 
@@ -358,7 +395,18 @@ impl Supervisor {
         let request_id = env.request_id.clone();
         let line = encode_line(&env).map_err(|e| SupervisorError::Encode(e.to_string()))?;
         let (tx, rx) = oneshot::channel();
-        self.inner.pending.insert(request_id.clone(), tx);
+        self.inner.pending.insert(
+            request_id.clone(),
+            PendingRequest {
+                tx,
+                kind: env.kind.clone(),
+                run_id: env
+                    .payload
+                    .get("run_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+            },
+        );
         {
             let mut guard = self.inner.child.lock().await;
             let Some(handle) = guard.as_mut() else {
@@ -400,8 +448,16 @@ pub fn encode_line(env: &Envelope) -> Result<String, serde_json::Error> {
 
 /// Route one stdout line from the sidecar: envelopes whose `request_id`
 /// matches a pending request complete that request; everything else is
-/// broadcast as an event. Unparseable lines are logged and ignored.
-pub fn route_incoming_line(line: &str, pending: &PendingMap, events: &broadcast::Sender<Envelope>) {
+/// broadcast as an event. Also maintains the active-stream registry (M1):
+/// a delivered `run.start` ack opens a stream, `run.*` events for untracked
+/// request_ids register one, and `run.completed`/`run.failed` closes it.
+/// Unparseable lines are logged and ignored.
+pub fn route_incoming_line(
+    line: &str,
+    pending: &PendingMap,
+    streams: &StreamMap,
+    events: &broadcast::Sender<Envelope>,
+) {
     let env: Envelope = match serde_json::from_str(line) {
         Ok(env) => env,
         Err(e) => {
@@ -409,20 +465,72 @@ pub fn route_incoming_line(line: &str, pending: &PendingMap, events: &broadcast:
             return;
         }
     };
-    if let Some((_, tx)) = pending.remove(&env.request_id) {
-        let _ = tx.send(env);
-    } else {
-        // No subscriber is fine.
-        let _ = events.send(env);
+    if let Some((_, request)) = pending.remove(&env.request_id) {
+        if request.kind == "run.start" && env.kind != "error" {
+            // The ack consumed the oneshot; the run's events now flow on the
+            // broadcast channel. Track the stream so a crash can fail it.
+            let run_id = request.run_id.or_else(|| payload_run_id(&env));
+            streams.insert(env.request_id.clone(), run_id);
+        }
+        let _ = request.tx.send(env);
+        return;
     }
+    match env.kind.as_str() {
+        "run.completed" | "run.failed" => {
+            streams.remove(&env.request_id);
+        }
+        kind if kind.starts_with("run.") => {
+            // First event for a request_id with no pending entry (e.g. the
+            // ack raced ahead of tracking): register the stream.
+            streams
+                .entry(env.request_id.clone())
+                .or_insert_with(|| payload_run_id(&env));
+        }
+        _ => {}
+    }
+    // No subscriber is fine.
+    let _ = events.send(env);
+}
+
+fn payload_run_id(env: &Envelope) -> Option<String> {
+    env.payload
+        .get("run_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 /// Fail every pending request with an `error` envelope carrying `code`.
 pub fn fail_all_pending(pending: &PendingMap, code: &str, message: &str) {
     let ids: Vec<String> = pending.iter().map(|r| r.key().clone()).collect();
     for id in ids {
-        if let Some((_, tx)) = pending.remove(&id) {
-            let _ = tx.send(Envelope::error(id, code, message, true));
+        if let Some((_, request)) = pending.remove(&id) {
+            let _ = request.tx.send(Envelope::error(id, code, message, true));
+        }
+    }
+}
+
+/// Broadcast a synthetic `run.failed` for every active stream (sidecar exit
+/// or shutdown). The payload carries `run_id` when known so host-side run
+/// persistence (which matches on `request_id` + `payload.run_id`) can mark
+/// the run terminated instead of leaking it in "running" state.
+pub fn fail_active_streams(
+    streams: &StreamMap,
+    events: &broadcast::Sender<Envelope>,
+    code: &str,
+    message: &str,
+) {
+    let ids: Vec<String> = streams.iter().map(|r| r.key().clone()).collect();
+    for id in ids {
+        if let Some((_, run_id)) = streams.remove(&id) {
+            let mut payload = serde_json::json!({
+                "error": { "code": code, "message": message, "retryable": true }
+            });
+            if let Some(run_id) = run_id {
+                payload["run_id"] = serde_json::Value::String(run_id);
+            }
+            let mut env = Envelope::new("run.failed", payload);
+            env.request_id = id;
+            let _ = events.send(env);
         }
     }
 }
@@ -434,11 +542,20 @@ mod tests {
 
     fn test_channels() -> (
         PendingMap,
+        StreamMap,
         broadcast::Sender<Envelope>,
         broadcast::Receiver<Envelope>,
     ) {
         let (tx, rx) = broadcast::channel(8);
-        (DashMap::new(), tx, rx)
+        (DashMap::new(), DashMap::new(), tx, rx)
+    }
+
+    fn pending_request(tx: oneshot::Sender<Envelope>, kind: &str) -> PendingRequest {
+        PendingRequest {
+            tx,
+            kind: kind.to_string(),
+            run_id: None,
+        }
     }
 
     #[test]
@@ -453,12 +570,12 @@ mod tests {
 
     #[tokio::test]
     async fn correlated_response_completes_pending_request() {
-        let (pending, events, _rx) = test_channels();
+        let (pending, streams, events, _rx) = test_channels();
         let (tx, rx) = oneshot::channel();
-        pending.insert("req-1".to_string(), tx);
+        pending.insert("req-1".to_string(), pending_request(tx, "runtime.health"));
         let resp = Envelope::error("req-1", "boom", "it broke", false);
         let line = serde_json::to_string(&resp).unwrap();
-        route_incoming_line(&line, &pending, &events);
+        route_incoming_line(&line, &pending, &streams, &events);
         let got = rx.await.expect("response delivered");
         assert_eq!(got.request_id, "req-1");
         assert!(pending.is_empty());
@@ -466,29 +583,29 @@ mod tests {
 
     #[tokio::test]
     async fn uncorrelated_message_is_broadcast_as_event() {
-        let (pending, events, mut rx) = test_channels();
+        let (pending, streams, events, mut rx) = test_channels();
         let event = Envelope::new("run.text_delta", json!({"text": "hi"}));
         let line = serde_json::to_string(&event).unwrap();
-        route_incoming_line(&line, &pending, &events);
+        route_incoming_line(&line, &pending, &streams, &events);
         let got = rx.try_recv().expect("event broadcast");
         assert_eq!(got.kind, "run.text_delta");
     }
 
     #[test]
     fn non_json_line_is_ignored() {
-        let (pending, events, mut rx) = test_channels();
-        route_incoming_line("not json at all", &pending, &events);
+        let (pending, streams, events, mut rx) = test_channels();
+        route_incoming_line("not json at all", &pending, &streams, &events);
         assert!(rx.try_recv().is_err());
         assert!(pending.is_empty());
     }
 
     #[tokio::test]
     async fn fail_all_pending_marks_requests_with_error_code() {
-        let (pending, _events, _rx) = test_channels();
+        let (pending, _streams, _events, _rx) = test_channels();
         let (tx1, rx1) = oneshot::channel();
         let (tx2, rx2) = oneshot::channel();
-        pending.insert("a".to_string(), tx1);
-        pending.insert("b".to_string(), tx2);
+        pending.insert("a".to_string(), pending_request(tx1, "runtime.health"));
+        pending.insert("b".to_string(), pending_request(tx2, "runtime.health"));
         fail_all_pending(&pending, "sidecar_crashed", "sidecar process exited");
         for (rx, id) in [(rx1, "a"), (rx2, "b")] {
             let env = rx.await.expect("error delivered");
@@ -497,5 +614,61 @@ mod tests {
             assert_eq!(env.error_code(), Some("sidecar_crashed"));
         }
         assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_start_ack_opens_stream_and_terminal_event_closes_it() {
+        let (pending, streams, events, _rx) = test_channels();
+        let (tx, _rx) = oneshot::channel();
+        pending.insert(
+            "req-run".to_string(),
+            PendingRequest {
+                tx,
+                kind: "run.start".to_string(),
+                run_id: Some("run-1".to_string()),
+            },
+        );
+        // Ack delivery registers the stream.
+        let mut ack = Envelope::new("run.start.ok", json!({"run_id": "run-1"}));
+        ack.request_id = "req-run".to_string();
+        let line = serde_json::to_string(&ack).unwrap();
+        route_incoming_line(&line, &pending, &streams, &events);
+        assert_eq!(
+            streams.get("req-run").as_deref(),
+            Some(&Some("run-1".to_string()))
+        );
+
+        // Streaming events keep it registered...
+        let mut delta = Envelope::new("run.text_delta", json!({"run_id": "run-1", "text": "hi"}));
+        delta.request_id = "req-run".to_string();
+        let line = serde_json::to_string(&delta).unwrap();
+        route_incoming_line(&line, &pending, &streams, &events);
+        assert!(streams.contains_key("req-run"));
+
+        // ...and the terminal event closes it.
+        let mut done = Envelope::new("run.completed", json!({"run_id": "run-1"}));
+        done.request_id = "req-run".to_string();
+        let line = serde_json::to_string(&done).unwrap();
+        route_incoming_line(&line, &pending, &streams, &events);
+        assert!(!streams.contains_key("req-run"));
+    }
+
+    #[tokio::test]
+    async fn fail_active_streams_broadcasts_synthetic_run_failed() {
+        let (_pending, streams, events, mut rx) = test_channels();
+        streams.insert("req-run".to_string(), Some("run-1".to_string()));
+        fail_active_streams(
+            &streams,
+            &events,
+            "sidecar_crashed",
+            "agent runtime exited unexpectedly",
+        );
+        let env = rx.try_recv().expect("synthetic event");
+        assert_eq!(env.kind, "run.failed");
+        assert_eq!(env.request_id, "req-run");
+        assert_eq!(env.payload["run_id"], json!("run-1"));
+        assert_eq!(env.payload["error"]["code"], json!("sidecar_crashed"));
+        assert_eq!(env.payload["error"]["retryable"], json!(true));
+        assert!(streams.is_empty());
     }
 }

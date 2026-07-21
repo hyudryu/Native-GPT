@@ -5,6 +5,7 @@ import {
   useAddModel,
   useDiscoverModels,
   useModels,
+  useSetAllModelsHidden,
   useUpdateEndpoint,
   useUpdateModel,
   type Endpoint,
@@ -104,27 +105,42 @@ export default function ModelsPanel({ endpoint }: { endpoint: Endpoint }) {
   const models = useModels(endpoint.id, true);
   const discover = useDiscoverModels(endpoint.id);
   const addModel = useAddModel(endpoint.id);
+  const setAllHidden = useSetAllModelsHidden(endpoint.id);
   const [manualId, setManualId] = useState("");
 
   const list = models.data?.models ?? discover.data?.models ?? [];
+  const allEnabled = list.length > 0 && list.every((m) => !m.hidden);
 
   return (
     <div className="mt-3 rounded-xl border border-border bg-surface-0 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-medium text-fg">Models</h4>
-        <button
-          type="button"
-          onClick={() => discover.mutate()}
-          disabled={discover.isPending}
-          className={smallBtn}
-        >
-          {discover.isPending ? (
-            <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="size-3.5" aria-hidden />
-          )}
-          Refresh models
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAllHidden.mutate(allEnabled)}
+            disabled={setAllHidden.isPending || list.length === 0}
+            className={smallBtn}
+          >
+            {setAllHidden.isPending && (
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+            )}
+            {allEnabled ? "Disable all" : "Enable all"}
+          </button>
+          <button
+            type="button"
+            onClick={() => discover.mutate()}
+            disabled={discover.isPending}
+            className={smallBtn}
+          >
+            {discover.isPending ? (
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-3.5" aria-hidden />
+            )}
+            Refresh models
+          </button>
+        </div>
       </div>
 
       <details className="mt-2 rounded-xl border border-border bg-surface-1 px-3 py-2">
@@ -162,11 +178,12 @@ export default function ModelsPanel({ endpoint }: { endpoint: Endpoint }) {
         </form>
       </details>
 
-      {(models.isError || discover.isError || addModel.isError) && (
+      {(models.isError || discover.isError || addModel.isError || setAllHidden.isError) && (
         <p role="alert" className="mt-2 text-xs text-danger">
           {models.isError && errorText(models.error)}
           {discover.isError && errorText(discover.error)}
           {addModel.isError && errorText(addModel.error)}
+          {setAllHidden.isError && errorText(setAllHidden.error)}
         </p>
       )}
 

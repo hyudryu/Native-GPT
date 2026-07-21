@@ -1,19 +1,7 @@
-import type { DetailedReactHTMLElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { FC } from "react";
-
-const components: Record<string, React.ComponentType<Record<string, unknown>>> = {
-  code({ className, children, ...props }: Record<string, unknown>) {
-    const match = /language-(\w+)/.exec((className as string) ?? "");
-    return (
-      <code className={className} {...(props as DetailedReactHTMLElement<{}, "code">["htmlProps"])}>
-        {children}
-      </code>
-    );
-  },
-};
 
 /**
  * Renders a message with markdown support.
