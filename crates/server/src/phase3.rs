@@ -22,8 +22,9 @@ where
 #[derive(Debug, Deserialize)]
 pub struct CreateProject {
     name: String,
+    /// Absent and explicit `null` both mean "no instructions".
     #[serde(default)]
-    instructions: String,
+    instructions: Option<String>,
     #[serde(default)]
     endpoint_id: Option<String>,
     #[serde(default)]
@@ -171,7 +172,12 @@ pub async fn create_project(
     let project = ProjectRow {
         id: uuid::Uuid::now_v7().to_string(),
         name: name.to_string(),
-        instructions: body.instructions.trim().to_string(),
+        instructions: body
+            .instructions
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
         endpoint_id: body.endpoint_id,
         model_id: body.model_id,
         created_at: now.clone(),
@@ -449,6 +455,19 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{value}");
         value["project"].clone()
+    }
+
+    #[tokio::test]
+    async fn project_create_accepts_missing_or_null_instructions() {
+        let rig = rig();
+        for body in [
+            json!({"name": "No instructions"}),
+            json!({"name": "Null instructions", "instructions": null}),
+        ] {
+            let (status, value) = send(&rig.app, "POST", "/api/projects", Some(body)).await;
+            assert_eq!(status, StatusCode::CREATED, "{value}");
+            assert_eq!(value["project"]["instructions"], json!(""));
+        }
     }
 
     #[tokio::test]

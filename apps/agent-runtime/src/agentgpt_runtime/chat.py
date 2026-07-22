@@ -25,6 +25,38 @@ def openai_base_url(value: str) -> str:
     return value if value.endswith("/v1") else f"{value}/v1"
 
 
+def build_openai_model(payload: RunStartPayload) -> Any:
+    """Construct the Strands OpenAIModel for a run, honoring ``tls_verify``.
+
+    When verification is disabled (self-signed/internal CA servers) we cannot
+    pass an ``http_client`` through ``client_args``: Strands builds a fresh
+    ``AsyncOpenAI`` from ``client_args`` on every request and closes it, which
+    would also close any shared httpx client after the first request. Instead
+    we inject a pre-configured client, which Strands reuses without closing;
+    the run's single event loop owns its lifecycle.
+    """
+    from strands.models.openai import OpenAIModel  # noqa: PLC0415
+
+    base_url = openai_base_url(payload.model.base_url)
+    # The SDK requires a value even when a local server ignores auth.
+    api_key = payload.model.api_key or "local-no-key"
+    if payload.tls_verify:
+        return OpenAIModel(
+            model_id=payload.model.model_id,
+            client_args={"base_url": base_url, "api_key": api_key},
+            stream=True,
+        )
+    import httpx  # noqa: PLC0415
+    from openai import AsyncOpenAI  # noqa: PLC0415
+
+    client = AsyncOpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        http_client=httpx.AsyncClient(verify=False),
+    )
+    return OpenAIModel(client=client, model_id=payload.model.model_id, stream=True)
+
+
 def strands_messages(history: list[Any]) -> list[dict[str, Any]]:
     return [
         {"role": item.role, "content": [{"text": item.content}]}
@@ -180,17 +212,8 @@ class ChatRuns:
     async def _stream(self, payload: RunStartPayload, request_id: str, active: ActiveRun) -> None:
         # Keep heavyweight/provider-specific imports off the startup path.
         from strands import Agent  # noqa: PLC0415
-        from strands.models.openai import OpenAIModel  # noqa: PLC0415
 
-        model = OpenAIModel(
-            model_id=payload.model.model_id,
-            client_args={
-                "base_url": openai_base_url(payload.model.base_url),
-                # The SDK requires a value even when a local server ignores auth.
-                "api_key": payload.model.api_key or "local-no-key",
-            },
-            stream=True,
-        )
+        model = build_openai_model(payload)
         agent = Agent(
             model=model,
             messages=strands_messages(payload.history),

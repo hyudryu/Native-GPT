@@ -164,3 +164,55 @@ def test_list_models_auth_failure_raises(mock_server) -> None:
     assert exc_info.value.code == "auth_error"
     # The wrong key must not leak into the error message.
     assert "sk-wrong" not in exc_info.value.message
+
+
+# --- tls_verify ---
+
+
+def _spy_httpx_client(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Replace httpx.Client with a recording fake; returns captured kwargs."""
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        def json(self) -> dict:
+            return {"data": [{"id": "m-1"}]}
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, url: str, headers: dict | None = None) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("agentgpt_runtime.endpoints.httpx.Client", FakeClient)
+    return captured
+
+
+def test_tls_verify_false_disables_httpx_verification(monkeypatch) -> None:
+    captured = _spy_httpx_client(monkeypatch)
+    result = list_models(_list_payload("https://selfsigned.local", tls_verify=False))
+    assert [m.id for m in result.models] == ["m-1"]
+    assert captured["verify"] is False
+
+    result = probe_endpoint(_test_payload("https://selfsigned.local", tls_verify=False))
+    assert result.ok is True
+    assert captured["verify"] is False
+
+
+def test_tls_verify_absent_defaults_to_secure(monkeypatch) -> None:
+    captured = _spy_httpx_client(monkeypatch)
+    list_models(_list_payload("https://api.example.com"))
+    assert captured["verify"] is True
+
+    result = probe_endpoint(_test_payload("https://api.example.com"))
+    assert result.ok is True
+    assert captured["verify"] is True

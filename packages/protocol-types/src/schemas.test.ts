@@ -32,4 +32,19 @@ describe("protocol schemas", () => {
     expect(messages.$defs).toHaveProperty("run.tool_call");
     expect(messages.$defs).toHaveProperty("run.tool_result");
   });
+
+  it("threads optional tls_verify through endpoint/model/run payloads", () => {
+    const messages = schema("messages.json") as {
+      $defs: Record<
+        string,
+        { properties?: Record<string, { type?: string }>; required?: string[] }
+      >;
+    };
+    for (const name of ["endpoint.test", "models.list", "run.start"]) {
+      const definition = messages.$defs[name];
+      expect(definition.properties?.tls_verify?.type).toBe("boolean");
+      // Absent must stay valid: secure-by-default is applied by the receivers.
+      expect(definition.required ?? []).not.toContain("tls_verify");
+    }
+  });
 });

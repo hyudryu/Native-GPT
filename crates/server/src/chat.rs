@@ -135,6 +135,7 @@ pub async fn send_message(
             .collect(),
         system_prompt,
         enabled_tools,
+        tls_verify: Some(resolved.tls_verify),
         model: crate::protocol::RunModel {
             base_url: resolved.provider_url,
             model_id: resolved.model_id,
@@ -463,9 +464,10 @@ mod tests {
         // Phase 1.5: the canned tool_call/tool_result pair the fake_sidecar
         // emits between run.started and run.text_delta is persisted on the
         // assistant message as a JSON tool-events trace.
-        let tool_events_json = messages[1].tool_events_json.as_ref().expect(
-            "assistant message from a run with tool events must persist tool_events_json",
-        );
+        let tool_events_json = messages[1]
+            .tool_events_json
+            .as_ref()
+            .expect("assistant message from a run with tool events must persist tool_events_json");
         let events: Vec<Value> = serde_json::from_str(tool_events_json).unwrap();
         assert_eq!(events.len(), 2, "one call + one result: {events:?}");
         assert_eq!(events[0]["kind"], "call");

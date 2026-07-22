@@ -230,6 +230,12 @@ export async function listConversations(): Promise<Conversation[]> {
     .conversations;
 }
 
+export async function listArchivedConversations(): Promise<Conversation[]> {
+  return (
+    await request<{ conversations: Conversation[] }>("/api/conversations?archived=true")
+  ).conversations;
+}
+
 export async function getConversation(id: string): Promise<Conversation> {
   return (
     await request<{ conversation: Conversation }>(
@@ -351,6 +357,16 @@ export function useConversations() {
   return useQuery({
     queryKey: conversationsKey,
     queryFn: listConversations,
+    staleTime: 10_000,
+  });
+}
+
+export function useArchivedConversations() {
+  return useQuery({
+    // Nested under conversationsKey so archive/unarchive/delete mutations
+    // (which invalidate the "conversations" prefix) refresh this list too.
+    queryKey: [...conversationsKey, "archived"],
+    queryFn: listArchivedConversations,
     staleTime: 10_000,
   });
 }

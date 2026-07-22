@@ -51,7 +51,12 @@ def resolve_models_url(base_url: str, model_list_path: str = DEFAULT_MODEL_LIST_
     return base + path
 
 
-def _fetch_json(url: str, api_key: str | None, timeout_seconds: int) -> tuple[Any, httpx.Response]:
+def _fetch_json(
+    url: str,
+    api_key: str | None,
+    timeout_seconds: int,
+    tls_verify: bool = True,
+) -> tuple[Any, httpx.Response]:
     """GET url and parse the body as JSON.
 
     Raises EndpointError with a wire-level code on any failure. Error
@@ -62,7 +67,7 @@ def _fetch_json(url: str, api_key: str | None, timeout_seconds: int) -> tuple[An
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
-        with httpx.Client(timeout=timeout_seconds) as client:
+        with httpx.Client(timeout=timeout_seconds, verify=tls_verify) as client:
             response = client.get(url, headers=headers)
     except httpx.TimeoutException as exc:
         raise EndpointError(
@@ -101,7 +106,7 @@ def test_endpoint(payload: EndpointTestPayload) -> EndpointTestOkPayload:
     url = resolve_models_url(payload.base_url)
     start = time.perf_counter()
     try:
-        _, response = _fetch_json(url, payload.api_key, payload.timeout_seconds)
+        _, response = _fetch_json(url, payload.api_key, payload.timeout_seconds, payload.tls_verify)
     except EndpointError as exc:
         return EndpointTestOkPayload(
             ok=False,
@@ -118,7 +123,7 @@ def test_endpoint(payload: EndpointTestPayload) -> EndpointTestOkPayload:
 def list_models(payload: ModelsListPayload) -> ModelsListOkPayload:
     """Fetch and parse the OpenAI-style models list. Raises EndpointError."""
     url = resolve_models_url(payload.base_url, payload.model_list_path)
-    body, _ = _fetch_json(url, payload.api_key, payload.timeout_seconds)
+    body, _ = _fetch_json(url, payload.api_key, payload.timeout_seconds, payload.tls_verify)
 
     if not isinstance(body, dict) or not isinstance(body.get("data"), list):
         raise EndpointError(

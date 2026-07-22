@@ -3,6 +3,8 @@ import { Dialog } from "@base-ui-components/react/dialog";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
   Archive,
+  ArchiveRestore,
+  ChevronDown,
   Download,
   Ellipsis,
   Folder,
@@ -28,6 +30,7 @@ import {
   listMessages,
   modelOptionValue,
   parseModelOptionValue,
+  useArchivedConversations,
   useConversations,
   useCreateConversation,
   useCreateProject,
@@ -41,6 +44,7 @@ import {
   type Conversation,
   type Project,
 } from "../lib/dataApi";
+import { relativeTime } from "../lib/relTime";
 import { useRailModeStore } from "../lib/railMode";
 
 const iconButton =
@@ -169,6 +173,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
   const projects = useProjects();
   const conversations = useConversations();
+  const archivedConversations = useArchivedConversations();
   const createConversation = useCreateConversation();
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
@@ -279,6 +284,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   const activeConversations = (conversations.data ?? []).filter((item) => !item.archived_at);
   const ungrouped = activeConversations.filter((item) => !item.project_id);
+  const archived = archivedConversations.data ?? [];
+
+  const unarchiveConversation = (conversation: Conversation) => {
+    updateConversation.mutate({ id: conversation.id, input: { archived: false } });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-1">
@@ -399,6 +409,46 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               )}
               <ul className="space-y-0.5">{ungrouped.map(conversationRow)}</ul>
             </section>
+
+            {archived.length > 0 && (
+              <section aria-labelledby="archived-heading" className="mt-4">
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 [&::-webkit-details-marker]:hidden">
+                    <h2 id="archived-heading" className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
+                      Archived
+                    </h2>
+                    <ChevronDown className="size-4 text-fg-subtle transition-transform group-open:rotate-180" aria-hidden />
+                  </summary>
+                  <ul className="space-y-0.5">
+                    {archived.map((conversation) => (
+                      <li key={conversation.id} className="flex min-w-0 items-center gap-1">
+                        <NavLink
+                          to={`/conversations/${conversation.id}`}
+                          onClick={onNavigate}
+                          className={({ isActive }) => `${row} ${isActive ? "bg-surface-2 text-fg" : ""}`}
+                        >
+                          <MessageSquare className="size-4 shrink-0" aria-hidden />
+                          <span className="min-w-0">
+                            <span className="block truncate">{conversation.title}</span>
+                            <span className="block truncate text-xs text-fg-subtle">
+                              {relativeTime(conversation.updated_at ?? conversation.created_at ?? "")}
+                            </span>
+                          </span>
+                        </NavLink>
+                        <button
+                          type="button"
+                          aria-label={`Unarchive ${conversation.title}`}
+                          onClick={() => unarchiveConversation(conversation)}
+                          className="inline-flex min-h-11 min-w-9 shrink-0 items-center justify-center rounded-xl text-fg-subtle transition-colors duration-150 hover:bg-surface-2 hover:text-fg"
+                        >
+                          <ArchiveRestore className="size-4" aria-hidden />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            )}
           </>
         )}
       </div>

@@ -39,11 +39,15 @@ export interface EndpointTest {
   base_url: string;
   api_key_ref?: string;
   timeout_seconds?: number;
+  /** When false, the sidecar skips TLS certificate verification. Default true. */
+  tls_verify?: boolean;
 }
 export interface ModelsList {
   base_url: string;
   api_key_ref?: string;
   model_list_path?: string;
+  /** When false, the sidecar skips TLS certificate verification. Default true. */
+  tls_verify?: boolean;
 }
 export interface ModelsListOk {
   models: Array<{ id: string; raw?: Record<string, unknown> }>;
@@ -58,6 +62,8 @@ export interface RunStart {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   system_prompt?: string;
   enabled_tools?: string[];
+  /** When false, the sidecar skips TLS certificate verification. Default true. */
+  tls_verify?: boolean;
   model: { base_url: string; model_id: string; api_key?: string };
 }
 export interface RunStarted {
