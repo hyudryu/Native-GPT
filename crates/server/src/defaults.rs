@@ -18,9 +18,11 @@ pub fn is_bundled(id: &str) -> bool {
 
 /// True if `<id>/<file>` exists in the embedded bundle.
 fn has_bundled_file(id: &str, file: &str) -> bool {
-    BUNDLED_TOOLS
-        .get_dir(id)
-        .is_some_and(|dir| dir.entries().iter().any(|entry| entry.path().file_name().is_some_and(|name| name == file)))
+    BUNDLED_TOOLS.get_dir(id).is_some_and(|dir| {
+        dir.entries()
+            .iter()
+            .any(|entry| entry.path().file_name().is_some_and(|name| name == file))
+    })
 }
 
 /// Restore a built-in tool's `manifest.json` + `tool.py` to the shipped
@@ -76,10 +78,9 @@ mod tests {
         )
         .unwrap();
         restore(root, "calculate").unwrap();
-        let restored = std::fs::read_to_string(
-            root.join("tools").join("calculate").join("manifest.json"),
-        )
-        .unwrap();
+        let restored =
+            std::fs::read_to_string(root.join("tools").join("calculate").join("manifest.json"))
+                .unwrap();
         assert_ne!(restored, "MODIFIED");
         assert!(restored.contains("calculate"));
     }

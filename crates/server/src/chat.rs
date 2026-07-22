@@ -159,7 +159,11 @@ pub async fn send_message(
     } else {
         system_prompt
     };
-    let enabled_tools = if factory_mode { Vec::new() } else { enabled_tools };
+    let enabled_tools = if factory_mode {
+        Vec::new()
+    } else {
+        enabled_tools
+    };
 
     let created_at = now();
     let user_message = MessageRow {

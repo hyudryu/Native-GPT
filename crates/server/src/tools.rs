@@ -139,14 +139,14 @@ fn read_tool_source(repo_root: &Path, id: &str) -> Result<ToolSource, ApiError> 
     }
     let tool_code = std::fs::read_to_string(dir.join("tool.py"))
         .map_err(|e| ApiError::internal(e.to_string()))?;
-    Ok(ToolSource { manifest, tool_code })
+    Ok(ToolSource {
+        manifest,
+        tool_code,
+    })
 }
 
 /// Public wrapper for use by `chat::factory_system_prompt` (revision mode).
-pub fn read_tool_source_public(
-    state: &SharedState,
-    id: &str,
-) -> Result<ToolSource, ApiError> {
+pub fn read_tool_source_public(state: &SharedState, id: &str) -> Result<ToolSource, ApiError> {
     read_tool_source(&state.repo_root, id)
 }
 
@@ -270,15 +270,22 @@ pub async fn source(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, ApiError> {
     let src = read_tool_source(&state.repo_root, &id)?;
-    Ok(Json(json!({ "manifest": src.manifest, "tool_code": src.tool_code })))
+    Ok(Json(
+        json!({ "manifest": src.manifest, "tool_code": src.tool_code }),
+    ))
 }
 
 pub async fn create(
     State(state): State<SharedState>,
     Json(body): Json<CreateTool>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let manifest =
-        write_tool_files(&state.repo_root, &body.id, body.manifest, &body.tool_code, true)?;
+    let manifest = write_tool_files(
+        &state.repo_root,
+        &body.id,
+        body.manifest,
+        &body.tool_code,
+        true,
+    )?;
     let tool = list_for_state(&state)
         .await?
         .into_iter()
@@ -298,7 +305,13 @@ pub async fn update(
     if let Some(obj) = manifest_value.as_object_mut() {
         obj.insert("id".to_string(), serde_json::Value::String(id.clone()));
     }
-    write_tool_files(&state.repo_root, &id, manifest_value, &body.tool_code, false)?;
+    write_tool_files(
+        &state.repo_root,
+        &id,
+        manifest_value,
+        &body.tool_code,
+        false,
+    )?;
     let tool = list_for_state(&state)
         .await?
         .into_iter()
