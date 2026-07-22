@@ -20,7 +20,7 @@ pub fn is_bundled(id: &str) -> bool {
 fn has_bundled_file(id: &str, file: &str) -> bool {
     BUNDLED_TOOLS
         .get_dir(id)
-        .is_some_and(|dir| dir.entries().into_iter().any(|entry| entry.path().file_name().is_some_and(|name| name == file)))
+        .is_some_and(|dir| dir.entries().iter().any(|entry| entry.path().file_name().is_some_and(|name| name == file)))
 }
 
 /// Restore a built-in tool's `manifest.json` + `tool.py` to the shipped
@@ -34,7 +34,7 @@ pub fn restore(repo_root: &Path, id: &str) -> Result<(), String> {
     for file in ["manifest.json", "tool.py"] {
         let entry = dir
             .entries()
-            .into_iter()
+            .iter()
             .find(|entry| entry.path().file_name().is_some_and(|name| name == file))
             .ok_or_else(|| format!("built-in {id} missing {file}"))?;
         let contents = entry
