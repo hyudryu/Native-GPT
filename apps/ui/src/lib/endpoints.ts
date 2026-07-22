@@ -159,6 +159,16 @@ export function updateModel(
   ).then((d) => d.model);
 }
 
+export function setAllModelsHidden(
+  id: string,
+  input: { hidden: boolean },
+): Promise<ModelInfo[]> {
+  return apiFetch<{ models: ModelInfo[] }>(
+    `/api/endpoints/${encodeURIComponent(id)}/models/hidden`,
+    { method: "POST", body: JSON.stringify(input) },
+  ).then((d) => d.models);
+}
+
 // ---- react-query hooks ----
 
 const endpointsKey = ["endpoints"] as const;
@@ -258,6 +268,20 @@ export function useUpdateModel(id: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: modelsKey(id) });
       void qc.invalidateQueries({ queryKey: ["models", "enabled"] });
+    },
+  });
+}
+
+export function useSetAllModelsHidden(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (hidden: boolean) => setAllModelsHidden(id, { hidden }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: modelsKey(id) });
+      void qc.invalidateQueries({ queryKey: ["models", "enabled"] });
+    },
+    onError: (error) => {
+      console.error("Failed to toggle model visibility:", error);
     },
   });
 }

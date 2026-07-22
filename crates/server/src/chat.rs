@@ -220,11 +220,17 @@ async fn persist_terminal_run(
     let Ok(Some(mut run)) = state.db.get_run(run_id).await else {
         return;
     };
-    let cancelled = event.kind == "run.failed"
-        && event.payload.pointer("/error/code").and_then(Value::as_str) == Some("cancelled");
+    // `cancelled` (user abort) and `sidecar_crashed` (synthetic terminal event
+    // from the supervisor after a runtime exit) both mean the run was cut
+    // short rather than failed by the model.
+    let interrupted = event.kind == "run.failed"
+        && matches!(
+            event.payload.pointer("/error/code").and_then(Value::as_str),
+            Some("cancelled") | Some("sidecar_crashed")
+        );
     run.status = if event.kind == "run.completed" {
         "completed"
-    } else if cancelled {
+    } else if interrupted {
         "interrupted"
     } else {
         "failed"
@@ -249,7 +255,18 @@ async fn persist_terminal_run(
             run.assistant_message_id = Some(assistant.id);
         }
     }
-    let _ = state.db.update_run(&run).await;
+    if state.db.update_run(&run).await.is_ok() {
+        // M3: notify other WS clients (small payload, no message content).
+        crate::events::data_changed(
+            state,
+            json!({
+                "entity": "message",
+                "conversation_id": conversation_id,
+                "run_id": run_id,
+                "status": run.status,
+            }),
+        );
+    }
 }
 
 pub async fn cancel_run(
@@ -303,11 +320,9 @@ mod tests {
         (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
     }
 
-    #[tokio::test]
-    async fn send_streams_and_persists_assistant_reply() {
-        let rig = crate::state::test_state_with_fake_sidecar("token");
-        let app = crate::build_router(rig.state.clone());
-
+    /// Create an endpoint + conversation against the fake sidecar; returns
+    /// (provider_id, conversation_id).
+    async fn setup_conversation(app: &axum::Router, db: &crate::db::Db) -> (String, String) {
         let response = app
             .clone()
             .oneshot(request(
@@ -318,14 +333,10 @@ mod tests {
             .await
             .unwrap();
         let (_, provider) = response_json(response).await;
-        let provider_id = provider["endpoint"]["id"].as_str().unwrap();
+        let provider_id = provider["endpoint"]["id"].as_str().unwrap().to_string();
 
-        app.clone()
-            .oneshot(request(
-                Method::POST,
-                &format!("/api/endpoints/{provider_id}/test"),
-                None,
-            ))
+        // Conversation model selection is validated against the models table.
+        db.upsert_model(&provider_id, "fake-model-1", "discovered", None)
             .await
             .unwrap();
 
@@ -343,7 +354,30 @@ mod tests {
             .await
             .unwrap();
         let (_, conversation) = response_json(response).await;
-        let conversation_id = conversation["conversation"]["id"].as_str().unwrap();
+        let conversation_id = conversation["conversation"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("conversation create failed: {conversation}"))
+            .to_string();
+        (provider_id, conversation_id)
+    }
+
+    async fn wait_for_terminal_status(db: &crate::db::Db, run_id: &str) -> crate::db::RunRow {
+        for _ in 0..100 {
+            let run = db.get_run(run_id).await.unwrap().unwrap();
+            if run.status != "running" {
+                return run;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("run {run_id} stayed 'running' — persistence task leaked?");
+    }
+
+    #[tokio::test]
+    async fn send_streams_and_persists_assistant_reply() {
+        let rig = crate::state::test_state_with_fake_sidecar("token");
+        let app = crate::build_router(rig.state.clone());
+
+        let (_, conversation_id) = setup_conversation(&app, &rig.state.db).await;
 
         let response = app
             .clone()
@@ -363,7 +397,7 @@ mod tests {
             if rig
                 .state
                 .db
-                .list_messages(conversation_id)
+                .list_messages(&conversation_id)
                 .await
                 .unwrap()
                 .len()
@@ -373,7 +407,7 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let messages = rig.state.db.list_messages(conversation_id).await.unwrap();
+        let messages = rig.state.db.list_messages(&conversation_id).await.unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].role, "assistant");
         assert_eq!(messages[1].content, "fake reply");
@@ -386,6 +420,71 @@ mod tests {
             serde_json::from_str::<Value>(run.usage_json.as_deref().unwrap()).unwrap()
                 ["total_tokens"],
             15
+        );
+    }
+
+    #[tokio::test]
+    async fn sidecar_crash_mid_run_marks_run_interrupted() {
+        // M1: the fake sidecar dies right after the first delta. The
+        // supervisor must broadcast a synthetic run.failed so the persistence
+        // task terminates and the run does not stay "running" forever.
+        let rig = crate::state::test_state_with_fake_sidecar("token");
+        let app = crate::build_router(rig.state.clone());
+        let (_, conversation_id) = setup_conversation(&app, &rig.state.db).await;
+        let mut host_events = rig.state.host_events.subscribe();
+
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                &format!("/api/conversations/{conversation_id}/messages"),
+                Some(json!({"content":"trigger-crash"})),
+            ))
+            .await
+            .unwrap();
+        let (status, value) = response_json(response).await;
+        assert_eq!(status, StatusCode::CREATED, "{value}");
+        let run_id = value["run"]["id"].as_str().unwrap().to_string();
+
+        let run = wait_for_terminal_status(&rig.state.db, &run_id).await;
+        assert_eq!(run.status, "interrupted");
+        assert!(run.completed_at.is_some());
+        let error_json = run.error_json.unwrap_or_default();
+        assert!(
+            error_json.contains("sidecar_crashed"),
+            "error_json: {error_json}"
+        );
+
+        // The partial delta is persisted as an interrupted assistant message.
+        let messages = rig.state.db.list_messages(&conversation_id).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].status, "interrupted");
+        assert_eq!(messages[1].content, "partial");
+
+        // M3: data.changed for the terminal state reached the host channel.
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let env = host_events.recv().await.unwrap();
+                if env.kind == "data.changed" && env.payload["run_id"] == json!(run_id) {
+                    break env;
+                }
+            }
+        })
+        .await
+        .expect("data.changed for run");
+        assert_eq!(event.payload["entity"], json!("message"));
+        assert_eq!(event.payload["status"], json!("interrupted"));
+
+        // The supervisor observed the exit.
+        for _ in 0..50 {
+            if rig.state.supervisor.state() == agentgpt_supervisor::SidecarState::NotSpawned {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            rig.state.supervisor.state(),
+            agentgpt_supervisor::SidecarState::NotSpawned
         );
     }
 }

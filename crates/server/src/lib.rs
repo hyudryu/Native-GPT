@@ -8,6 +8,7 @@
 pub mod auth;
 pub mod db;
 pub mod error;
+pub mod events;
 pub mod net;
 pub mod protocol;
 pub mod relay;
@@ -215,6 +216,7 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         telemetry: Telemetry::new(),
         db,
         secrets: Arc::new(agentgpt_secure_store::SecureStore::new("agentgpt")),
+        host_events: tokio::sync::broadcast::channel(state::HOST_EVENTS_CAPACITY).0,
     });
 
     let local_url = format!("http://127.0.0.1:{port}");
@@ -318,6 +320,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/api/endpoints/{id}/models",
             get(endpoints::list_models).post(endpoints::add_model),
+        )
+        .route(
+            "/api/endpoints/{id}/models/hidden",
+            post(endpoints::set_all_models_hidden),
         )
         .route(
             "/api/endpoints/{id}/models/{model_id}",

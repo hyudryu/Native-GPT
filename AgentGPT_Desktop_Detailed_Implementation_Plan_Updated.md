@@ -2471,6 +2471,12 @@ Test with at least:
 - Approval UI
 - Interrupt/resume flow
 - Tool-call cards
+- Markdown rendering in chat messages (react-markdown + remark-gfm + rehype-highlight)
+- Knowledge dump — persist assistant responses as structured content for later retrieval
+- Web search tool with YouTube/Instagram URL support via youwee (yt-dlp-based media extraction)
+  - YouTube: search, metadata extraction, transcript fetching, AI-powered video summaries
+  - Instagram: post/reel metadata extraction, content summarization
+  - Fallback: generic URL content fetching for other sites
 
 ### Acceptance criteria
 
@@ -2478,6 +2484,40 @@ Test with at least:
 - Destructive tool pauses for approval.
 - Denial is communicated back to the agent cleanly.
 - Tool inputs and outputs are stored in run history.
+
+### Implementation approach — Web search with yt-dlp
+
+**Why yt-dlp:** Youwee uses yt-dlp as its core engine for extracting content from 1,800+ sites including YouTube and Instagram. yt-dlp is the industry standard for media metadata, transcript fetching, and content extraction.
+
+**Approach for Rust backend:**
+1. Bundle yt-dlp as a sidecar binary (similar to Youwee's approach).
+2. Create a `web_search` tool that:
+   - Accepts a URL string
+   - Routes to the appropriate extractor based on domain:
+     - `youtube.com` / `youtu.be` → yt-dlp with `--dump-json` for metadata + `--write-srt --write-auto-srt` for transcripts + optional AI summary via the model provider
+     - `instagram.com` → yt-dlp with cookie-based extraction for metadata
+     - Generic → HTTP fetch + DOM text extraction (cheerio or custom parser)
+3. Cache results in SQLite keyed by URL with configurable TTL.
+4. Return structured results: `{ title, description, thumbnail_url, duration, transcript_summary, raw_content }`.
+
+**Approach for Knowledge dump:**
+1. After each tool call completes, store the result in a `knowledge_items` table with fields: `{ id, source_type, source_id, content, metadata, created_at, ttl }`.
+2. After assistant messages complete, dump the final response text to the knowledge dump.
+3. On conversation start, query relevant knowledge items based on conversation context.
+4. Provide a `/api/knowledge` endpoint for agents to query the knowledge store.
+
+**Frontend — Markdown rendering:**
+1. Install `react-markdown` (markdown parser), `remark-gfm` (GitHub Flavored Markdown for tables, strikethrough, task lists), and `rehype-highlight` (syntax highlighting for code blocks).
+2. Create a `MarkdownMessage` component that:
+   - Uses `<ReactMarkdown>` for completed assistant messages.
+   - Falls back to raw text for streaming messages (markdown is incomplete during streaming).
+   - User messages are always rendered as plain text via `<PlainTextMessage>`.
+3. Apply Tailwind classes for consistent styling of rendered markdown elements (headings, lists, tables, code blocks).
+- Assistant messages render markdown (bold, lists, code blocks, tables) correctly in the UI.
+- Knowledge dump captures tool outputs and assistant responses for reuse in future conversations.
+- Web search resolves YouTube URLs to video metadata + transcript summary.
+- Web search resolves Instagram URLs to post metadata + content summary.
+- Web search degrades gracefully for non-media URLs.
 
 ---
 
@@ -2918,6 +2958,17 @@ The coding agent should receive one narrowly scoped task at a time. Each task mu
 - **AG-105:** Build approval dialog.
 - **AG-106:** Resume or deny Strands execution after approval.
 - **AG-107:** Add tool-call history cards.
+- **AG-108:** Install react-markdown, remark-gfm, rehype-highlight and render assistant messages as markdown in the UI.
+- **AG-109:** Render user messages as plain text (no markdown parsing).
+- **AG-110:** Display streaming messages as raw text (markdown is incomplete mid-stream).
+- **AG-111:** Implement knowledge-dump tool — persists assistant responses, tool outputs, and evidence as structured content in the local SQLite store.
+- **AG-112:** On tool call completion, store the output and metadata in the knowledge dump for later retrieval across conversations.
+- **AG-113:** Implement web-search tool that accepts a URL and returns structured content.
+- **AG-114:** Integrate yt-dlp (via youwee's extraction approach) for YouTube URLs: search, metadata, transcript fetching, AI summary.
+- **AG-115:** Integrate yt-dlp for Instagram URLs: post/reel metadata and content extraction.
+- **AG-116:** Implement fallback content fetcher for generic URLs (fetch page, extract text via DOM parsing).
+- **AG-117:** Cache web-search results in the knowledge dump with URL as key, TTL-based invalidation.
+- **AG-118:** Add web-search results to chat as collapsible cards with metadata preview.
 
 ### Epic G — Sandbox
 

@@ -21,6 +21,8 @@ export interface Conversation {
   endpoint_id?: string | null;
   model_id?: string | null;
   archived_at?: string | null;
+  /** Write-only: PATCH accepts `archived: bool` (server maps to archived_at). */
+  archived?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -205,7 +207,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
 
 export async function sendMessage(
   conversationId: string,
-  input: { content: string },
+  input: { content: string; endpoint_id?: string; model_id?: string },
 ): Promise<{ message: Message; run: RunRef }> {
   return request(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -332,7 +334,7 @@ export function useMessages(conversationId: string | undefined) {
 export function useSendMessage(conversationId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: { content: string }) =>
+    mutationFn: (input: { content: string; endpoint_id?: string; model_id?: string }) =>
       sendMessage(conversationId, input),
     onSuccess: ({ message }) => {
       client.setQueryData<Message[]>(messagesKey(conversationId), (current = []) => {

@@ -5,11 +5,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use agentgpt_supervisor::protocol::Envelope;
 use agentgpt_supervisor::Supervisor;
 use agentgpt_telemetry::Telemetry;
+use tokio::sync::broadcast;
 
 use crate::db::Db;
 use crate::secrets::KeyStore;
+
+/// Capacity of the host-originated broadcast channel (M3 multi-client sync).
+pub const HOST_EVENTS_CAPACITY: usize = 256;
 
 pub struct AppState {
     /// Bearer token for non-localhost auth. Never logged.
@@ -29,6 +34,9 @@ pub struct AppState {
     pub db: Db,
     /// Keychain for endpoint API keys (service "agentgpt", key = endpoint id).
     pub secrets: Arc<dyn KeyStore>,
+    /// Host-originated broadcast envelopes (e.g. `data.changed`), forwarded
+    /// to every WS client alongside supervisor events.
+    pub host_events: broadcast::Sender<Envelope>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -67,6 +75,7 @@ fn make_test_state(token: &str, sidecar: agentgpt_supervisor::SupervisorConfig) 
         telemetry: Telemetry::new(),
         db,
         secrets: secrets.clone(),
+        host_events: broadcast::channel(HOST_EVENTS_CAPACITY).0,
     });
     TestState {
         state,

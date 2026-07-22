@@ -178,6 +178,7 @@ pub async fn create_project(
         updated_at: now,
     };
     state.db.insert_project(&project).await?;
+    crate::events::data_changed(&state, json!({ "entity": "project", "id": project.id }));
     Ok((StatusCode::CREATED, Json(json!({ "project": project }))))
 }
 
@@ -221,6 +222,7 @@ pub async fn patch_project(
     .await?;
     project.updated_at = chrono::Utc::now().to_rfc3339();
     state.db.update_project(&project).await?;
+    crate::events::data_changed(&state, json!({ "entity": "project", "id": project.id }));
     Ok(Json(json!({ "project": project })))
 }
 
@@ -231,6 +233,7 @@ pub async fn delete_project(
     if !state.db.delete_project(&id).await? {
         return Err(ApiError::not_found(format!("project {id} not found")));
     }
+    crate::events::data_changed(&state, json!({ "entity": "project", "id": id }));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -273,6 +276,10 @@ pub async fn create_conversation(
         updated_at: now,
     };
     state.db.insert_conversation(&conversation).await?;
+    crate::events::data_changed(
+        &state,
+        json!({ "entity": "conversation", "id": conversation.id, "conversation_id": conversation.id }),
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({ "conversation": conversation })),
@@ -325,6 +332,10 @@ pub async fn patch_conversation(
     .await?;
     conversation.updated_at = chrono::Utc::now().to_rfc3339();
     state.db.update_conversation(&conversation).await?;
+    crate::events::data_changed(
+        &state,
+        json!({ "entity": "conversation", "id": conversation.id, "conversation_id": conversation.id }),
+    );
     Ok(Json(json!({ "conversation": conversation })))
 }
 
@@ -335,6 +346,10 @@ pub async fn delete_conversation(
     if !state.db.delete_conversation(&id).await? {
         return Err(ApiError::not_found(format!("conversation {id} not found")));
     }
+    crate::events::data_changed(
+        &state,
+        json!({ "entity": "conversation", "id": id, "conversation_id": id }),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -621,6 +636,69 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{value}");
         assert!(value["project"]["endpoint_id"].is_null());
         assert!(value["project"]["model_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn conversation_create_emits_data_changed() {
+        let rig = rig();
+        let mut events = rig.test_state.state.host_events.subscribe();
+        let (status, value) = send(
+            &rig.app,
+            "POST",
+            "/api/conversations",
+            Some(json!({"title": "Synced chat"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{value}");
+        let conversation_id = value["conversation"]["id"].as_str().unwrap();
+
+        let env = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .expect("data.changed emitted")
+            .expect("channel open");
+        assert_eq!(env.kind, "data.changed");
+        assert_eq!(env.protocol, "1.0");
+        assert_eq!(env.payload["entity"], json!("conversation"));
+        assert_eq!(env.payload["id"], json!(conversation_id));
+        assert_eq!(env.payload["conversation_id"], json!(conversation_id));
+    }
+
+    #[tokio::test]
+    async fn project_patch_and_delete_emit_data_changed() {
+        let rig = rig();
+        let project = create_project(&rig.app).await;
+        let project_id = project["id"].as_str().unwrap().to_string();
+        let mut events = rig.test_state.state.host_events.subscribe();
+
+        let (status, _) = send(
+            &rig.app,
+            "PATCH",
+            &format!("/api/projects/{project_id}"),
+            Some(json!({"name": "Renamed"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let env = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(env.kind, "data.changed");
+        assert_eq!(env.payload["entity"], json!("project"));
+        assert_eq!(env.payload["id"], json!(project_id));
+
+        let (status, _) = send(
+            &rig.app,
+            "DELETE",
+            &format!("/api/projects/{project_id}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let env = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(env.payload["entity"], json!("project"));
     }
 
     #[tokio::test]

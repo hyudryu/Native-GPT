@@ -3,6 +3,7 @@ import AppShell from "./layout/AppShell";
 import ChatPage from "./pages/ChatPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import { useDataChangedSync } from "./lib/useDataChangedSync";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import BrainPage from "./pages/BrainPage";
 import KnowledgeDumpPage from "./pages/KnowledgeDumpPage";
@@ -10,6 +11,8 @@ import ToolsPage from "./pages/ToolsPage";
 import UpdatesPage from "./pages/UpdatesPage";
 
 export default function App() {
+  useDataChangedSync();
+
   return (
     <HashRouter>
       <Routes>

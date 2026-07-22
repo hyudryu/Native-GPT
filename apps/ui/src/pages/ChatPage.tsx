@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import {
   CircleStop,
   Github,
   LoaderCircle,
-  MessageSquareDashed,
+  Plus,
   SendHorizontal,
 } from "lucide-react";
 import {
@@ -24,6 +24,7 @@ import {
   type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
 
 type Activity = { message: string; source?: string };
 
@@ -103,45 +104,106 @@ function NewConversation() {
   const navigate = useNavigate();
   const models = useEnabledModels();
   const create = useCreateConversation();
-  const first = models.data?.[0];
+  const [draft, setDraft] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
 
-  const start = () => {
+  useEffect(() => {
+    const available = models.data ?? [];
+    if (available.length === 0) {
+      setSelectedModel("");
+      return;
+    }
+    setSelectedModel((current) =>
+      available.some((m) => modelOptionValue(m) === current)
+        ? current
+        : modelOptionValue(available[0]!),
+    );
+  }, [models.data]);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const content = draft.trim();
+    const model = parseModelOptionValue(selectedModel);
+    if (!content || create.isPending || !model) return;
+    const title =
+      content.length > 48 ? `${content.slice(0, 48).trimEnd()}…` : content;
     create.mutate(
+      { title, endpoint_id: model.provider_id, model_id: model.model_id },
       {
-        title: "New conversation",
-        ...(first
-          ? { endpoint_id: first.provider_id, model_id: first.model_id }
-          : {}),
+        onSuccess: (conversation) =>
+          navigate(`/conversations/${conversation.id}`, {
+            state: { firstMessage: content, modelValue: selectedModel },
+          }),
       },
-      { onSuccess: (conversation) => navigate(`/conversations/${conversation.id}`) },
     );
   };
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-      <div className="flex size-14 items-center justify-center rounded-2xl bg-surface-1 shadow-sm">
-        <MessageSquareDashed className="size-7 text-fg-subtle" aria-hidden />
-      </div>
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Start a conversation</h1>
-        <p className="mt-2 max-w-sm text-sm text-fg-muted">
-          Create a local conversation, then choose any model enabled in Provider settings.
-        </p>
-      </div>
-      {models.isError && (
-        <p role="alert" className="text-sm text-danger">
-          Models could not be loaded. You can still create the conversation and configure it later.
+    <div className="flex h-full flex-col items-center justify-center gap-8 px-4 py-10">
+      <h1 className="text-center text-2xl font-semibold tracking-tight text-fg">
+        Where should we begin?
+      </h1>
+      <form
+        aria-label="New conversation composer"
+        onSubmit={submit}
+        className="mx-auto flex w-full max-w-2xl flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
+      >
+        <textarea
+          rows={2}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+          autoFocus
+          placeholder="Ask Native GPT"
+          aria-label="Message"
+          className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg placeholder:text-fg-subtle"
+        />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled
+            title="Attachments (coming soon)"
+            aria-label="Attachments (coming soon)"
+            className="inline-flex min-h-11 min-w-11 cursor-not-allowed items-center justify-center rounded-xl text-fg-subtle/50"
+          >
+            <Plus className="size-5" aria-hidden />
+          </button>
+          <div className="flex-1" />
+          <ModelPicker
+            models={models.data ?? []}
+            value={selectedModel}
+            onChange={setSelectedModel}
+            disabled={create.isPending}
+          />
+          <button
+            type="submit"
+            disabled={!draft.trim() || !selectedModel || create.isPending}
+            aria-label="Send message"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-accent text-accent-contrast hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {create.isPending ? (
+              <LoaderCircle className="size-5 animate-spin" aria-hidden />
+            ) : (
+              <SendHorizontal className="size-5" aria-hidden />
+            )}
+          </button>
+        </div>
+      </form>
+      {models.isSuccess && models.data.length === 0 && (
+        <p role="status" className="max-w-2xl text-center text-xs text-warning">
+          No models are enabled. Enable one in Settings → Providers.
         </p>
       )}
-      <button
-        type="button"
-        onClick={start}
-        disabled={create.isPending}
-        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-accent px-4 text-sm font-medium text-accent-contrast hover:bg-accent-hover disabled:opacity-50"
-      >
-        {create.isPending && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
-        Create conversation
-      </button>
+      {models.isError && (
+        <p role="alert" className="text-sm text-danger">
+          Models could not be loaded. Configure a provider in Settings first.
+        </p>
+      )}
       {create.isError && (
         <p role="alert" className="text-sm text-danger">
           {create.error.message}
@@ -154,6 +216,8 @@ function NewConversation() {
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const conversation = useConversation(conversationId);
   const messages = useMessages(conversationId);
   const projects = useProjects();
@@ -167,6 +231,38 @@ export default function ChatPage() {
   const [streamText, setStreamText] = useState("");
   const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
   const [streamError, setStreamError] = useState<string | null>(null);
+  const autoSentRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const autoScrollRef = useRef(true);
+
+  // Landing from the new-conversation composer: send the first message
+  // immediately so it streams live, then clear the navigation state.
+  useEffect(() => {
+    const state = location.state as
+      | { firstMessage?: string; modelValue?: string }
+      | null;
+    if (!state?.firstMessage || autoSentRef.current || !conversationId) return;
+    if (messages.isPending) return;
+    if ((messages.data?.length ?? 0) > 0) {
+      autoSentRef.current = true;
+      return;
+    }
+    const model = parseModelOptionValue(state.modelValue ?? "");
+    if (!model) return;
+    autoSentRef.current = true;
+    if (state.modelValue) setSelectedModel(state.modelValue);
+    setStreamText("");
+    setStreamError(null);
+    send.mutate(
+      {
+        content: state.firstMessage,
+        endpoint_id: model.provider_id,
+        model_id: model.model_id,
+      },
+      { onSuccess: ({ run }) => setActiveRun(run) },
+    );
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, conversationId, messages.isPending, messages.data, navigate, send]);
 
   useEffect(() => {
     const available = enabledModels.data ?? [];
@@ -221,6 +317,10 @@ export default function ChatPage() {
       const error = payload.error as { message?: string } | undefined;
       setStreamError(error?.message ?? "The response failed.");
       setActiveRun(null);
+      // The host persists any partial assistant text on failure/cancel — refetch.
+      void queryClient
+        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
+        .then(() => setStreamText(""));
     });
     return () => {
       offDelta();
@@ -229,6 +329,77 @@ export default function ChatPage() {
       offFailed();
     };
   }, [activeRun, conversationId, queryClient]);
+
+  // ── Auto-scroll to bottom ──────────────────────────────────────────────────
+
+  // Timestamp (monotonic) of the last content change. Set in RAF so it is
+  // guaranteed to run after the DOM has been updated but before the browser
+  // processes subsequent scroll events — letting us distinguish programmatic
+  // scrolls (happen before the RAF fires) from user scrolls (happen after).
+  const contentChangedAtRef = useRef(0);
+  const rafIdRef = useRef(0);
+
+  // Track when content changes so the scroll handler can distinguish
+  // programmatic scrolls from user-initiated ones.
+  useEffect(() => {
+    contentChangedAtRef.current = performance.now();
+    return () => cancelAnimationFrame(rafIdRef.current);
+  }, [messages.data, activeRun, streamText, streamError, send.isError]);
+
+  // Scroll-to-bottom after every paint whenever content changes.
+  useLayoutEffect(() => {
+    if (!autoScrollRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: "auto" });
+  }, [messages.data, activeRun, streamText, streamError, send.isError]);
+
+  // Disable auto-scroll when the user manually scrolls away from the bottom.
+  useEffect(() => {
+    const THRESHOLD = 50; // px from bottom to count as "at bottom"
+
+    const checkAtBottom = () => {
+      const el = scrollContainerRef.current;
+      if (!el) return false;
+      return el.scrollTop + el.clientHeight >= el.scrollHeight - THRESHOLD;
+    };
+
+    const onScroll = () => {
+      if (!autoScrollRef.current) return;
+
+      const now = performance.now();
+      const recentlyChanged = now - contentChangedAtRef.current < 250;
+
+      if (checkAtBottom()) {
+        if (recentlyChanged) {
+          // User scrolled down during a content update → follow along.
+          autoScrollRef.current = true;
+        } else {
+          // Settled at bottom after scrolling up → re-enable auto-scroll.
+          autoScrollRef.current = true;
+          onIdle();
+        }
+      } else {
+        if (!recentlyChanged) {
+          // User scrolled away from bottom and content has settled → break auto-scroll.
+          autoScrollRef.current = false;
+        }
+      }
+    };
+
+    const onIdle = () => {
+      rafIdRef.current = requestAnimationFrame(() => {
+        contentChangedAtRef.current = 0;
+      });
+    };
+
+    const el = scrollContainerRef.current;
+    el?.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el?.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(rafIdRef.current);
+    };
+  }, []);
 
   if (!conversationId) return <NewConversation />;
 
@@ -251,8 +422,16 @@ export default function ChatPage() {
     setStreamText("");
     setActivity({ message: "Thinking through the request" });
     setStreamError(null);
+    // Always send the picker selection with the message so the model the user
+    // sees is the model that runs — even if the conversation row still holds a
+    // stale or since-disabled model (the PATCH in chooseModel may not have
+    // happened, e.g. when the picker fell back to the first enabled model).
     send.mutate(
-      { content },
+      {
+        content,
+        endpoint_id: model.provider_id,
+        model_id: model.model_id,
+      },
       {
         onSuccess: ({ run }) => setActiveRun(run),
         onError: () => setDraft(content),
@@ -279,7 +458,11 @@ export default function ChatPage() {
         />
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" aria-busy={messages.isPending}>
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+        aria-busy={messages.isPending}
+      >
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
           {messages.isPending && (
             <p className="flex items-center gap-2 text-sm text-fg-muted">
@@ -296,6 +479,7 @@ export default function ChatPage() {
           )}
           {messages.data?.map((message) => {
             const user = message.role === "user";
+            const text = messageText(message.content ?? message.content_json);
             return (
               <article
                 key={message.id}
@@ -306,7 +490,9 @@ export default function ChatPage() {
                     : "mr-auto border border-border bg-surface-1 text-fg"
                 }`}
               >
-                {messageText(message.content ?? message.content_json)}
+                {user
+                  ? <PlainMessage content={text} />
+                  : <MarkdownMessage content={text} />}
               </article>
             );
           })}
@@ -317,7 +503,7 @@ export default function ChatPage() {
               aria-live="polite"
               className="mr-auto max-w-[88%] whitespace-pre-wrap rounded-2xl border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
             >
-              {streamText || <span className="text-fg-subtle">Thinking…</span>}
+              {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
             </article>
           )}
           {(streamError || send.isError) && (
@@ -325,6 +511,9 @@ export default function ChatPage() {
               {streamError ?? send.error?.message ?? "Message failed."}
             </p>
           )}
+
+          {/* Anchor element for scroll-to-bottom targeting */}
+          <div aria-hidden style={{ height: 1 }} />
         </div>
       </div>
 
@@ -362,6 +551,10 @@ export default function ChatPage() {
                   onSuccess: () => {
                     setActiveRun(null);
                     setStreamError("Response stopped.");
+                    // Partial assistant text is persisted on cancel — refetch.
+                    void queryClient
+                      .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
+                      .then(() => setStreamText(""));
                   },
                 })
               }

@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
+    # The protocol channel must be UTF-8 regardless of the host OS console
+    # encoding (Windows defaults to cp1252). Model output routinely contains
+    # characters cp1252 cannot encode.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

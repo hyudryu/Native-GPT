@@ -206,10 +206,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   };
 
   const startConversation = () => {
-    createConversation.mutate(
-      { title: "New conversation" },
-      { onSuccess: (item) => openConversation(item.id) },
-    );
+    // The home screen is now the composer — no empty conversation is created
+    // until the first message is sent.
+    onNavigate?.();
+    navigate("/");
   };
 
   const removeConversation = (conversation: Conversation) => {
@@ -264,7 +264,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         onDelete={() => removeConversation(conversation)}
         onArchive={() =>
           updateConversation.mutate(
-            { id: conversation.id, input: { archived_at: new Date().toISOString() } },
+            { id: conversation.id, input: { archived: true } },
             {
               onSuccess: () => {
                 if (location.pathname === `/conversations/${conversation.id}`) navigate("/");
@@ -290,15 +290,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <button
           type="button"
           onClick={startConversation}
-          disabled={createConversation.isPending}
           aria-label="New conversation"
           className={iconButton}
         >
-          {createConversation.isPending ? (
-            <LoaderCircle className="size-5 animate-spin" aria-hidden />
-          ) : (
-            <SquarePen className="size-5" aria-hidden />
-          )}
+          <SquarePen className="size-5" aria-hidden />
         </button>
       </div>
 
@@ -414,14 +409,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             {actionError ?? deleteConversation.error?.message ?? deleteProject.error?.message ?? updateConversation.error?.message}
           </p>
         )}
-        <NavLink
-          to="/settings"
-          onClick={onNavigate}
-          className={({ isActive }) => `${row} ${isActive ? "bg-surface-2 text-fg" : ""}`}
-        >
-          <Settings className="size-5" aria-hidden /> Settings
-        </NavLink>
-        <div className="flex items-center justify-end px-2">
+        <div className="flex items-center gap-1">
+          <NavLink
+            to="/settings"
+            onClick={onNavigate}
+            className={({ isActive }) => `${row} ${isActive ? "bg-surface-2 text-fg" : ""}`}
+          >
+            <Settings className="size-5" aria-hidden /> Settings
+          </NavLink>
           <ThemeToggle />
         </div>
       </div>

@@ -46,7 +46,20 @@ fn main() {
         if writeln!(out, "{}", serde_json::to_string(&resp).unwrap()).is_err() {
             break;
         }
+        let _ = out.flush();
         if env.kind == "run.start" {
+            if env.payload["prompt"] == "trigger-crash" {
+                // Crash mid-stream: one delta, then die without a terminal
+                // event (exercises M1 synthetic run.failed).
+                let mut event = Envelope::new(
+                    "run.text_delta",
+                    serde_json::json!({"run_id": env.payload["run_id"], "text": "partial"}),
+                );
+                event.request_id = env.request_id.clone();
+                let _ = writeln!(out, "{}", serde_json::to_string(&event).unwrap());
+                let _ = out.flush();
+                std::process::exit(2);
+            }
             for (kind, payload) in [
                 (
                     "run.text_delta",
@@ -70,7 +83,23 @@ fn main() {
                 event.request_id = env.request_id.clone();
                 let _ = writeln!(out, "{}", serde_json::to_string(&event).unwrap());
             }
+            let _ = out.flush();
         }
-        let _ = out.flush();
+        if env.kind == "test.stream" {
+            // Stream events for ~1s without any new request (exercises M2:
+            // stdout activity must refresh the idle timer).
+            for _ in 0..8 {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+                let mut event = Envelope::new(
+                    "run.text_delta",
+                    serde_json::json!({"run_id": "stream", "text": "tick"}),
+                );
+                event.request_id = env.request_id.clone();
+                if writeln!(out, "{}", serde_json::to_string(&event).unwrap()).is_err() {
+                    break;
+                }
+                let _ = out.flush();
+            }
+        }
     }
 }

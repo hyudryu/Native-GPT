@@ -70,7 +70,12 @@ class Sidecar:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
+            # The sidecar's protocol channel is UTF-8 (it reconfigures stdout
+            # itself); decode as such regardless of the host locale (cp1252
+            # on Windows) or non-ASCII model output turns into mojibake.
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         self._lines: queue.Queue[str] = queue.Queue()
         self._reader = threading.Thread(target=self._pump, daemon=True)

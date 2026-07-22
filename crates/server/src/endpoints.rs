@@ -350,6 +350,18 @@ pub async fn patch_model(
     Ok(Json(json!({ "model": model_json(&row) })))
 }
 
+pub async fn set_all_models_hidden(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<PatchModel>,
+) -> Result<Json<Value>, ApiError> {
+    load_endpoint(&state, &id).await?;
+    let rows = state.db.set_all_models_hidden(&id, body.hidden).await?;
+    Ok(Json(
+        json!({ "models": rows.iter().map(model_json).collect::<Vec<_>>() }),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

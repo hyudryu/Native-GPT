@@ -647,6 +647,28 @@ impl Db {
         })
         .await
     }
+
+    pub async fn set_all_models_hidden(
+        &self,
+        endpoint_id: &str,
+        hidden: bool,
+    ) -> Result<Vec<ModelRow>, DbError> {
+        let endpoint_id = endpoint_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE models SET hidden = ? WHERE endpoint_id = ?",
+                params![hidden, endpoint_id],
+            )?;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {MODEL_COLUMNS} FROM models WHERE endpoint_id = ? ORDER BY remote_model_id"
+            ))?;
+            let rows = stmt
+                .query_map(params![endpoint_id], model_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
 }
 
 impl Db {
@@ -1384,6 +1406,29 @@ mod tests {
             .unwrap();
         let row = db.get_model("ep-1", "m-2").await.unwrap().unwrap();
         assert_eq!(row.source, "manual");
+    }
+
+    #[tokio::test]
+    async fn set_all_models_hidden_bulk() {
+        let t = TestDb::new();
+        let db = t.db();
+        db.insert_endpoint(&sample_endpoint("ep-1")).await.unwrap();
+        db.upsert_model("ep-1", "m-1", "discovered", None)
+            .await
+            .unwrap();
+        db.upsert_model("ep-1", "m-2", "manual", None)
+            .await
+            .unwrap();
+
+        let rows = db.set_all_models_hidden("ep-1", true).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.hidden));
+
+        let rows = db.set_all_models_hidden("ep-1", false).await.unwrap();
+        assert!(rows.iter().all(|r| !r.hidden));
+        // Manual source survives the bulk toggle.
+        let manual = rows.iter().find(|r| r.remote_model_id == "m-2").unwrap();
+        assert_eq!(manual.source, "manual");
     }
 
     #[tokio::test]
