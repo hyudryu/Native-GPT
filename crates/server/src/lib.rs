@@ -17,6 +17,7 @@ pub mod state;
 pub mod ws;
 
 mod analytics;
+mod bridge;
 mod chat;
 mod endpoints;
 mod handlers;
@@ -24,6 +25,9 @@ mod knowledge;
 mod phase3;
 mod tools;
 mod updates;
+
+mod remote_hosts;
+mod assets;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -329,6 +333,25 @@ pub fn build_router(state: SharedState) -> Router {
             "/api/endpoints/{id}/models/{model_id}",
             patch(endpoints::patch_model),
         )
+        .route(
+            "/api/remote-hosts",
+            get(remote_hosts::list_hosts).post(remote_hosts::create_host),
+        )
+        .route(
+            "/api/remote-hosts/{id}",
+            patch(remote_hosts::patch_host).delete(remote_hosts::delete_host),
+        )
+        .route("/api/remote-hosts/{id}/test", post(remote_hosts::test_host))
+        .route(
+            "/api/remote-hosts/{host_id}/voices",
+            get(remote_hosts::list_voices).post(remote_hosts::upload_voice),
+        )
+        .route(
+            "/api/remote-hosts/{host_id}/voices/{voice_id}",
+            delete(remote_hosts::delete_voice),
+        )
+        .route("/api/assets/{id}", get(assets::serve_asset))
+        .route("/api/assets/{id}/meta", get(assets::get_asset_meta))
         .route(
             "/api/projects",
             get(phase3::list_projects).post(phase3::create_project),
