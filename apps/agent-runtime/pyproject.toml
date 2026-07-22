@@ -13,6 +13,11 @@ dependencies = [
     # Mandated agent SDK. Lazily imported (never at startup) to keep startup fast.
     "strands-agents>=1.48,<2",
     "tzdata>=2025.2",
+    # Web/fetch tool dependencies. bs4 + lxml power the markdown/text extraction
+    # in tools/web-fetch; ddgs backs tools/web-search (no API key required).
+    "beautifulsoup4>=4.13,<5",
+    "lxml>=6,<7",
+    "ddgs>=9,<10",
 ]
 
 [dependency-groups]
@@ -37,4 +42,4 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "../../tools"]

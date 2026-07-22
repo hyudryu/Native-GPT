@@ -80,6 +80,32 @@ export interface RunActivity {
   message: string;
   source?: string;
 }
+/** A tool invocation is starting: the model selected a tool and supplied arguments. */
+export interface RunToolCall {
+  run_id: string;
+  call_id: string;
+  tool: string;
+  input: Record<string, unknown>;
+}
+/** Structured error embedded in a `run.tool_result` payload when a tool failed. */
+export interface ToolResultError {
+  code: string;
+  message: string;
+}
+/**
+ * A tool invocation finished. Mirrors the standard tool result schema minus
+ * artifacts/citations/warnings (added when artifact tools exist).
+ */
+export interface RunToolResult {
+  run_id: string;
+  call_id: string;
+  tool: string;
+  ok: boolean;
+  summary: string;
+  data?: Record<string, unknown>;
+  error?: ToolResultError | null;
+  retryable?: boolean;
+}
 export interface RunCompleted {
   run_id: string;
   usage?: Record<string, unknown>;
@@ -99,6 +125,8 @@ export type StreamEventType =
   | "run.started"
   | "run.cancelled"
   | "run.activity"
+  | "run.tool_call"
+  | "run.tool_result"
   | "run.text_delta"
   | "run.completed"
   | "run.failed"

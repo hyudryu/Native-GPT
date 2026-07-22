@@ -1,0 +1,8 @@
+{
+  "id": "list-files",
+  "name": "List Files",
+  "description": "Lists files and subdirectories under a folder inside the repository root. Returns entries with name, type, and size; hides dotfiles by default.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true
+}

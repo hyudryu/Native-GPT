@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router";
 import {
+  Check,
+  ChevronDown,
   CircleStop,
-  Github,
   LoaderCircle,
   Plus,
   SendHorizontal,
+  X,
 } from "lucide-react";
 import {
   messageText,
@@ -28,10 +30,81 @@ import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
 
 type Activity = { message: string; source?: string };
 
+type ToolCallStatus = "pending" | "ok" | "error";
+
+type ToolCallEntry = {
+  callId: string;
+  tool: string;
+  input?: unknown;
+  status: ToolCallStatus;
+  summary?: string;
+  data?: unknown;
+  error?: { code: string; message: string } | null;
+};
+
+function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  if (entries.length === 0) return null;
+  return (
+    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-2xl flex-col gap-1.5">
+      {entries.map((entry) => {
+        const open = openId === entry.callId;
+        const Icon = entry.status === "pending" ? LoaderCircle : entry.status === "ok" ? Check : X;
+        const iconClass =
+          entry.status === "pending"
+            ? "animate-spin text-fg-muted"
+            : entry.status === "ok"
+              ? "text-success"
+              : "text-danger";
+        return (
+          <li key={entry.callId} className="rounded-lg border border-border bg-surface-1 text-sm">
+            <button
+              type="button"
+              onClick={() => setOpenId(open ? null : entry.callId)}
+              aria-expanded={open}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+            >
+              <Icon className={`size-3.5 shrink-0 ${iconClass}`} aria-hidden />
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{entry.tool}</span>
+              {entry.summary && entry.status !== "pending" && (
+                <span className="min-w-0 flex-[2] truncate text-xs text-fg-muted">{entry.summary}</span>
+              )}
+              <ChevronDown
+                className={`size-3.5 shrink-0 text-fg-subtle transition-transform ${open ? "rotate-180" : ""}`}
+                aria-hidden
+              />
+            </button>
+            {open && (
+              <div className="space-y-2 border-t border-border px-3 py-2 font-mono text-xs leading-relaxed text-fg-muted">
+                {entry.input !== undefined && (
+                  <div>
+                    <p className="text-fg-subtle">input</p>
+                    <pre className="mt-0.5 overflow-x-auto rounded bg-surface-2 p-2 text-fg">{JSON.stringify(entry.input, null, 2)}</pre>
+                  </div>
+                )}
+                {entry.data !== undefined && (
+                  <div>
+                    <p className="text-fg-subtle">output</p>
+                    <pre className="mt-0.5 overflow-x-auto rounded bg-surface-2 p-2 text-fg">{JSON.stringify(entry.data, null, 2)}</pre>
+                  </div>
+                )}
+                {entry.error && (
+                  <div>
+                    <p className="text-fg-subtle">error</p>
+                    <pre className="mt-0.5 overflow-x-auto rounded bg-danger-subtle p-2 text-danger">{JSON.stringify(entry.error, null, 2)}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function AgentActivity({ activity }: { activity: Activity }) {
   const source = activity.source ?? "Agent";
-  const githubActivity = source.toLowerCase().includes("github");
-  const Icon = githubActivity ? Github : LoaderCircle;
 
   return (
     <section
@@ -41,8 +114,8 @@ function AgentActivity({ activity }: { activity: Activity }) {
     >
       <p className="text-base leading-relaxed text-fg">{activity.message}</p>
       <div className="mt-3 flex items-center gap-3 text-fg-muted">
-        <Icon
-          className={`size-5 shrink-0 ${githubActivity ? "" : "animate-spin"}`}
+        <LoaderCircle
+          className="size-5 shrink-0 animate-spin"
           aria-hidden
         />
         <span className="min-w-0 truncate text-sm">{source}</span>
@@ -231,6 +304,7 @@ export default function ChatPage() {
   const [streamText, setStreamText] = useState("");
   const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -288,6 +362,8 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!activeRun || !conversationId) return;
+    // Fresh run — clear the previous run's tool trace.
+    setToolCalls([]);
     const matches = (requestId: string, payload: Record<string, unknown>) =>
       requestId === activeRun.request_id || payload.run_id === activeRun.id;
     const offDelta = socket.on("run.text_delta", (envelope) => {
@@ -302,6 +378,42 @@ export default function ChatPage() {
         message: payload.message,
         ...(typeof payload.source === "string" ? { source: payload.source } : {}),
       });
+    });
+    const offToolCall = socket.on("run.tool_call", (envelope) => {
+      const payload = envelope.payload as Record<string, unknown>;
+      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
+      const callId = payload.call_id;
+      const tool = typeof payload.tool === "string" ? payload.tool : "tool";
+      const input = payload.input;
+      setToolCalls((current) => {
+        if (current.some((entry) => entry.callId === callId)) return current;
+        return [
+          ...current,
+          { callId, tool, input, status: "pending" as ToolCallStatus },
+        ];
+      });
+    });
+    const offToolResult = socket.on("run.tool_result", (envelope) => {
+      const payload = envelope.payload as Record<string, unknown>;
+      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
+      const callId = payload.call_id;
+      const ok = payload.ok === true;
+      const summary = typeof payload.summary === "string" ? payload.summary : undefined;
+      const data = payload.data;
+      const error = (payload.error ?? null) as { code: string; message: string } | null;
+      setToolCalls((current) =>
+        current.map((entry) =>
+          entry.callId === callId
+            ? {
+                ...entry,
+                status: ok ? "ok" : ("error" as ToolCallStatus),
+                summary,
+                data,
+                error,
+              }
+            : entry,
+        ),
+      );
     });
     const offCompleted = socket.on("run.completed", (envelope) => {
       const payload = envelope.payload as Record<string, unknown>;
@@ -325,6 +437,8 @@ export default function ChatPage() {
     return () => {
       offDelta();
       offActivity();
+      offToolCall();
+      offToolResult();
       offCompleted();
       offFailed();
     };
@@ -344,7 +458,7 @@ export default function ChatPage() {
   useEffect(() => {
     contentChangedAtRef.current = performance.now();
     return () => cancelAnimationFrame(rafIdRef.current);
-  }, [messages.data, activeRun, streamText, streamError, send.isError]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls]);
 
   // Scroll-to-bottom after every paint whenever content changes.
   useLayoutEffect(() => {
@@ -352,7 +466,7 @@ export default function ChatPage() {
     const el = scrollContainerRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: "auto" });
-  }, [messages.data, activeRun, streamText, streamError, send.isError]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls]);
 
   // Disable auto-scroll when the user manually scrolls away from the bottom.
   useEffect(() => {
@@ -496,6 +610,7 @@ export default function ChatPage() {
               </article>
             );
           })}
+          {activeRun && <ToolCalls entries={toolCalls} />}
           {activeRun && !streamText && <AgentActivity activity={activity} />}
           {streamText && (
             <article
