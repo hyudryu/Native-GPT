@@ -166,6 +166,7 @@ class RunStartPayload(BaseModel):
     prompt: str
     history: list[ChatMessage] = Field(default_factory=list)
     system_prompt: str | None = None
+    enabled_tools: list[str] = Field(default_factory=list)
     model: RunModel
 
 

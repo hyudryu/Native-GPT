@@ -57,6 +57,7 @@ export interface RunStart {
   prompt: string;
   history: Array<{ role: "user" | "assistant"; content: string }>;
   system_prompt?: string;
+  enabled_tools?: string[];
   model: { base_url: string; model_id: string; api_key?: string };
 }
 export interface RunStarted {
@@ -72,6 +73,12 @@ export interface RunCancelled {
 export interface RunTextDelta {
   run_id: string;
   text: string;
+}
+/** A concise description of what the agent is doing before it has an answer. */
+export interface RunActivity {
+  run_id: string;
+  message: string;
+  source?: string;
 }
 export interface RunCompleted {
   run_id: string;
@@ -91,6 +98,7 @@ export interface RunFailed {
 export type StreamEventType =
   | "run.started"
   | "run.cancelled"
+  | "run.activity"
   | "run.text_delta"
   | "run.completed"
   | "run.failed"

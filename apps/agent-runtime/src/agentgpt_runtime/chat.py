@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentgpt_runtime.protocol import Envelope, RunStartPayload, make_envelope, make_error
+from agentgpt_runtime.tools import load_tools
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,27 @@ def strands_messages(history: list[Any]) -> list[dict[str, Any]]:
         for item in history
         if item.role in {"user", "assistant"} and item.content
     ]
+
+
+def usage_from_result(result: Any | None) -> dict[str, int | float]:
+    """Normalize Strands' accumulated metrics for persistence and analytics."""
+
+    metrics = getattr(result, "metrics", None)
+    usage = getattr(metrics, "accumulated_usage", None) or {}
+    timing = getattr(metrics, "accumulated_metrics", None) or {}
+    input_tokens = int(usage.get("inputTokens", usage.get("input_tokens", 0)) or 0)
+    output_tokens = int(usage.get("outputTokens", usage.get("output_tokens", 0)) or 0)
+    total_tokens = int(
+        usage.get("totalTokens", usage.get("total_tokens", input_tokens + output_tokens)) or 0
+    )
+    latency_ms = float(timing.get("latencyMs", timing.get("latency_ms", 0.0)) or 0.0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "latency_ms": latency_ms,
+        "tokens_per_second": output_tokens / (latency_ms / 1000) if latency_ms > 0 else 0.0,
+    }
 
 
 @dataclass
@@ -119,7 +141,7 @@ class ChatRuns:
             model=model,
             messages=strands_messages(payload.history),
             system_prompt=payload.system_prompt,
-            tools=[],
+            tools=load_tools(payload.enabled_tools),
             # Strands' default callback handler PRINTS streamed text to stdout,
             # which corrupts our NDJSON protocol channel (and crashes on
             # non-ASCII under Windows cp1252). Replace it with a no-op —
@@ -128,11 +150,32 @@ class ChatRuns:
         )
         active.agent = agent
         sequence = 0
+        result = None
+        self._emit(
+            make_envelope(
+                "run.activity",
+                request_id,
+                {"run_id": payload.run_id, "message": "Thinking through the request"},
+            ).model_copy(update={"sequence": sequence})
+        )
+        sequence += 1
         async for event in agent.stream_async(payload.prompt):
             if active.cancelled.is_set():
                 agent.cancel()
                 break
             text = event.get("data") if isinstance(event, dict) else None
+            if isinstance(event, dict) and event.get("result") is not None:
+                result = event["result"]
+            activity = activity_from_event(event)
+            if activity is not None:
+                self._emit(
+                    make_envelope(
+                        "run.activity",
+                        request_id,
+                        {"run_id": payload.run_id, **activity},
+                    ).model_copy(update={"sequence": sequence})
+                )
+                sequence += 1
             if isinstance(text, str) and text:
                 self._emit(
                     make_envelope(
@@ -164,6 +207,20 @@ class ChatRuns:
             make_envelope(
                 "run.completed",
                 request_id,
-                {"run_id": payload.run_id},
+                {"run_id": payload.run_id, "usage": usage_from_result(result)},
             ).model_copy(update={"sequence": sequence})
         )
+
+
+def activity_from_event(event: object) -> dict[str, str] | None:
+    """Normalize the tool-use shapes emitted by supported Strands versions."""
+    if not isinstance(event, dict):
+        return None
+    for key in ("current_tool_use", "tool_use"):
+        tool_use = event.get(key)
+        if not isinstance(tool_use, dict):
+            continue
+        name = tool_use.get("name") or tool_use.get("tool_name")
+        if isinstance(name, str) and name.strip():
+            return {"message": f"Using {name.strip()}", "source": name.strip()}
+    return None

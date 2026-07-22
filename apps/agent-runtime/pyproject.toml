@@ -12,6 +12,7 @@ dependencies = [
     "openai>=2.0,<3",
     # Mandated agent SDK. Lazily imported (never at startup) to keep startup fast.
     "strands-agents>=1.48,<2",
+    "tzdata>=2025.2",
 ]
 
 [dependency-groups]

@@ -73,7 +73,7 @@ pub async fn send_message(
         .await
         .map_err(resolution_error)?;
     let history = state.db.list_messages(&conversation_id).await?;
-    let system_prompt = match conversation.project_id.as_deref() {
+    let project_prompt = match conversation.project_id.as_deref() {
         Some(project_id) => state
             .db
             .get_project(project_id)
@@ -82,6 +82,14 @@ pub async fn send_message(
             .filter(|instructions| !instructions.is_empty()),
         None => None,
     };
+    let knowledge_context = crate::knowledge::context_for_prompt(&state, content).await?;
+    let system_prompt = match (project_prompt, knowledge_context) {
+        (Some(project), Some(knowledge)) => Some(format!("{project}\n\n{knowledge}")),
+        (Some(project), None) => Some(project),
+        (None, Some(knowledge)) => Some(knowledge),
+        (None, None) => None,
+    };
+    let enabled_tools = crate::tools::enabled_tool_ids(&state).await?;
 
     let created_at = now();
     let user_message = MessageRow {
@@ -125,6 +133,7 @@ pub async fn send_message(
             })
             .collect(),
         system_prompt,
+        enabled_tools,
         model: crate::protocol::RunModel {
             base_url: resolved.provider_url,
             model_id: resolved.model_id,
@@ -230,6 +239,8 @@ async fn persist_terminal_run(
     run.completed_at = Some(now());
     if event.kind == "run.failed" {
         run.error_json = event.payload.get("error").map(Value::to_string);
+    } else {
+        run.usage_json = event.payload.get("usage").map(Value::to_string);
     }
     if !assistant_text.is_empty() {
         let assistant = MessageRow {
@@ -403,6 +414,12 @@ mod tests {
         assert_eq!(
             rig.state.db.get_run(run_id).await.unwrap().unwrap().status,
             "completed"
+        );
+        let run = rig.state.db.get_run(run_id).await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(run.usage_json.as_deref().unwrap()).unwrap()
+                ["total_tokens"],
+            15
         );
     }
 

@@ -20,6 +20,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0001_endpoints.sql"),
     ),
     ("0002_phase3", include_str!("../migrations/0002_phase3.sql")),
+    (
+        "0003_app_hub",
+        include_str!("../migrations/0003_app_hub.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -170,6 +174,40 @@ pub struct RunRow {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct KnowledgeSourceRow {
+    pub id: String,
+    pub title: String,
+    pub source_type: String,
+    pub source_uri: Option<String>,
+    #[serde(skip_serializing)]
+    pub content: String,
+    pub chunk_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KnowledgeChunkRow {
+    pub id: String,
+    pub source_id: String,
+    pub source_title: String,
+    pub position: i64,
+    pub content: String,
+    pub embedding_json: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnalyticsRunRow {
+    pub provider_name: String,
+    pub model_id: String,
+    pub status: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub usage_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ProviderModelRow {
     pub provider_id: String,
     pub provider_name: String,
@@ -291,6 +329,19 @@ fn run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRow> {
     })
 }
 
+fn knowledge_source_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeSourceRow> {
+    Ok(KnowledgeSourceRow {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        source_type: row.get("source_type")?,
+        source_uri: row.get("source_uri")?,
+        content: row.get("content")?,
+        chunk_count: row.get("chunk_count")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
 const ENDPOINT_COLUMNS: &str = "id, name, base_url, timeout_seconds, tls_verify, has_api_key, \
      default_model_id, last_test_status, last_tested_at, created_at, updated_at";
 
@@ -304,6 +355,8 @@ const CONVERSATION_COLUMNS: &str =
 const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, status, created_at";
 const RUN_COLUMNS: &str = "id, conversation_id, user_message_id, assistant_message_id, status, \
     endpoint_id, model_id, started_at, completed_at, usage_json, error_json";
+const KNOWLEDGE_SOURCE_COLUMNS: &str =
+    "id, title, source_type, source_uri, content, chunk_count, created_at, updated_at";
 
 impl Db {
     /// Open (creating parent dirs), set pragmas, run pending migrations.
@@ -1047,6 +1100,161 @@ impl Db {
             provider_url: provider.base_url,
             model_id,
         })
+    }
+
+    pub async fn insert_knowledge_source(
+        &self,
+        source: &KnowledgeSourceRow,
+        chunks: &[KnowledgeChunkRow],
+    ) -> Result<(), DbError> {
+        let source = source.clone();
+        let chunks = chunks.to_vec();
+        self.call(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
+                &format!(
+                    "INSERT INTO knowledge_sources ({KNOWLEDGE_SOURCE_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    source.id,
+                    source.title,
+                    source.source_type,
+                    source.source_uri,
+                    source.content,
+                    source.chunk_count,
+                    source.created_at,
+                    source.updated_at,
+                ],
+            )?;
+            for chunk in chunks {
+                tx.execute(
+                    "INSERT INTO knowledge_chunks \
+                     (id, source_id, position, content, embedding_json, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    params![
+                        chunk.id,
+                        chunk.source_id,
+                        chunk.position,
+                        chunk.content,
+                        chunk.embedding_json,
+                        chunk.created_at,
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_knowledge_sources(&self) -> Result<Vec<KnowledgeSourceRow>, DbError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {KNOWLEDGE_SOURCE_COLUMNS} FROM knowledge_sources \
+                 ORDER BY created_at DESC, id DESC"
+            ))?;
+            let rows = stmt
+                .query_map([], knowledge_source_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn list_knowledge_chunks(&self) -> Result<Vec<KnowledgeChunkRow>, DbError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.source_id, s.title, c.position, c.content, \
+                        c.embedding_json, c.created_at \
+                 FROM knowledge_chunks c \
+                 JOIN knowledge_sources s ON s.id = c.source_id \
+                 ORDER BY s.created_at DESC, c.position",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(KnowledgeChunkRow {
+                        id: row.get(0)?,
+                        source_id: row.get(1)?,
+                        source_title: row.get(2)?,
+                        position: row.get(3)?,
+                        content: row.get(4)?,
+                        embedding_json: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn delete_knowledge_source(&self, id: &str) -> Result<bool, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            Ok(conn.execute("DELETE FROM knowledge_sources WHERE id = ?", params![id])? > 0)
+        })
+        .await
+    }
+
+    pub async fn set_tool_enabled(&self, tool_id: &str, enabled: bool) -> Result<(), DbError> {
+        let tool_id = tool_id.to_string();
+        let updated_at = chrono::Utc::now().to_rfc3339();
+        self.call(move |conn| {
+            conn.execute(
+                "INSERT INTO tool_settings (tool_id, enabled, updated_at) VALUES (?, ?, ?) \
+                 ON CONFLICT(tool_id) DO UPDATE SET enabled = excluded.enabled, \
+                 updated_at = excluded.updated_at",
+                params![tool_id, enabled, updated_at],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn tool_enabled(
+        &self,
+        tool_id: &str,
+        default_enabled: bool,
+    ) -> Result<bool, DbError> {
+        let tool_id = tool_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT enabled FROM tool_settings WHERE tool_id = ?",
+                    params![tool_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(default_enabled))
+        })
+        .await
+    }
+
+    pub async fn analytics_runs(&self) -> Result<Vec<AnalyticsRunRow>, DbError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(e.name, 'Unknown provider'), \
+                        COALESCE(r.model_id, 'Unknown model'), r.status, \
+                        r.started_at, r.completed_at, r.usage_json \
+                 FROM runs r LEFT JOIN endpoints e ON e.id = r.endpoint_id \
+                 ORDER BY r.started_at DESC",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(AnalyticsRunRow {
+                        provider_name: row.get(0)?,
+                        model_id: row.get(1)?,
+                        status: row.get(2)?,
+                        started_at: row.get(3)?,
+                        completed_at: row.get(4)?,
+                        usage_json: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
     }
 }
 

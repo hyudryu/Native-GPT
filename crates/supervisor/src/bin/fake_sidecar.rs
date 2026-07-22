@@ -67,7 +67,16 @@ fn main() {
                 ),
                 (
                     "run.completed",
-                    serde_json::json!({"run_id": env.payload["run_id"]}),
+                    serde_json::json!({
+                        "run_id": env.payload["run_id"],
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "total_tokens": 15,
+                            "latency_ms": 250.0,
+                            "tokens_per_second": 20.0
+                        }
+                    }),
                 ),
             ] {
                 let mut event = Envelope::new(kind, payload);

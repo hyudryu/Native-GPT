@@ -1,0 +1,8 @@
+{
+  "id": "current-time",
+  "name": "Current Time",
+  "description": "Returns the current date and time for an IANA timezone.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true
+}

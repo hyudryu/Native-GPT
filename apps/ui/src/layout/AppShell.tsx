@@ -6,6 +6,7 @@ import {
   Download,
   Ellipsis,
   Folder,
+  Grid2X2,
   LoaderCircle,
   Menu,
   MessageSquare,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import ThemeToggle from "../components/ThemeToggle";
 import WindowTitleBar from "../components/WindowTitleBar";
+import AppsMenu from "../features/apps/AppsMenu";
 import { dialogBackdropCls, dialogPopupCls } from "../components/dialogStyles";
 import { conversationMarkdown, safeExportName } from "../lib/conversationExport";
 import {
@@ -333,6 +335,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </section>
         ) : (
           <>
+            <AppsMenu onNavigate={onNavigate} />
             <section aria-labelledby="workspaces-heading">
               <div className="flex items-center justify-between px-3 py-2">
                 <h2 id="workspaces-heading" className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
@@ -523,6 +526,9 @@ function CompactRail() {
       <NavLink to="/" aria-label="New conversation" className={iconButton}>
         <SquarePen className="size-5" aria-hidden />
       </NavLink>
+      <NavLink to="/apps/knowledge-dump" aria-label="Apps" className={iconButton}>
+        <Grid2X2 className="size-5" aria-hidden />
+      </NavLink>
       <div className="flex-1" />
       <NavLink to="/settings" aria-label="Settings" className={iconButton}>
         <Settings className="size-5" aria-hidden />
@@ -577,6 +583,7 @@ export default function AppShell() {
             <NavLink to="/" className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><SquarePen className="size-5" aria-hidden />New</NavLink>
             <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><MessageSquare className="size-5" aria-hidden />Chats</button>
             <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Folder className="size-5" aria-hidden />Workspaces</button>
+            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Grid2X2 className="size-5" aria-hidden />Apps</button>
             <NavLink to="/settings" className={({ isActive }) => `flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${isActive ? "text-accent" : "text-fg-subtle"}`}><Settings className="size-5" aria-hidden />Settings</NavLink>
           </nav>
         </div>
