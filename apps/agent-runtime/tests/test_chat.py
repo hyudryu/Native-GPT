@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agentgpt_runtime.chat import ChatRuns, openai_base_url, strands_messages, usage_from_result
+from agentgpt_runtime.chat import (
+    ChatRuns,
+    activity_from_event,
+    openai_base_url,
+    strands_messages,
+    usage_from_result,
+)
 
 
 def test_openai_base_url_accepts_root_or_v1() -> None:
@@ -43,3 +49,11 @@ def test_usage_is_normalized_from_strands_metrics() -> None:
         "latency_ms": 2000.0,
         "tokens_per_second": 4.0,
     }
+
+
+def test_tool_use_event_becomes_a_concise_activity_update() -> None:
+    assert activity_from_event({"current_tool_use": {"name": "github_search"}}) == {
+        "message": "Using github_search",
+        "source": "github_search",
+    }
+    assert activity_from_event({"data": "answer text"}) is None

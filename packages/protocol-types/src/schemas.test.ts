@@ -18,6 +18,7 @@ describe("protocol schemas", () => {
       $defs: Record<string, unknown>;
     };
     expect(messages.$defs).toHaveProperty("run.started");
+    expect(messages.$defs).toHaveProperty("run.activity");
     expect(messages.$defs).toHaveProperty("run.text_delta");
     expect(messages.$defs).toHaveProperty("run.completed");
     expect(messages.$defs).toHaveProperty("run.failed");

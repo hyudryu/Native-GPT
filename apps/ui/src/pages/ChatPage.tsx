@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router";
 import {
   CircleStop,
+  Github,
   LoaderCircle,
   MessageSquareDashed,
   SendHorizontal,
@@ -23,6 +24,31 @@ import {
   type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+
+type Activity = { message: string; source?: string };
+
+function AgentActivity({ activity }: { activity: Activity }) {
+  const source = activity.source ?? "Agent";
+  const githubActivity = source.toLowerCase().includes("github");
+  const Icon = githubActivity ? Github : LoaderCircle;
+
+  return (
+    <section
+      aria-label="Agent activity"
+      aria-live="polite"
+      className="mr-auto w-full max-w-2xl px-1 py-2 text-sm"
+    >
+      <p className="text-base leading-relaxed text-fg">{activity.message}</p>
+      <div className="mt-3 flex items-center gap-3 text-fg-muted">
+        <Icon
+          className={`size-5 shrink-0 ${githubActivity ? "" : "animate-spin"}`}
+          aria-hidden
+        />
+        <span className="min-w-0 truncate text-sm">{source}</span>
+      </div>
+    </section>
+  );
+}
 
 function ModelPicker({
   models,
@@ -139,6 +165,7 @@ export default function ChatPage() {
   const [selectedModel, setSelectedModel] = useState("");
   const [activeRun, setActiveRun] = useState<RunRef | null>(null);
   const [streamText, setStreamText] = useState("");
+  const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
   const [streamError, setStreamError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -172,6 +199,14 @@ export default function ChatPage() {
       if (!matches(envelope.request_id, payload) || typeof payload.text !== "string") return;
       setStreamText((current) => current + payload.text);
     });
+    const offActivity = socket.on("run.activity", (envelope) => {
+      const payload = envelope.payload as Record<string, unknown>;
+      if (!matches(envelope.request_id, payload) || typeof payload.message !== "string") return;
+      setActivity({
+        message: payload.message,
+        ...(typeof payload.source === "string" ? { source: payload.source } : {}),
+      });
+    });
     const offCompleted = socket.on("run.completed", (envelope) => {
       const payload = envelope.payload as Record<string, unknown>;
       if (!matches(envelope.request_id, payload)) return;
@@ -189,6 +224,7 @@ export default function ChatPage() {
     });
     return () => {
       offDelta();
+      offActivity();
       offCompleted();
       offFailed();
     };
@@ -213,6 +249,7 @@ export default function ChatPage() {
     if (!content || activeRun || send.isPending || !model) return;
     setDraft("");
     setStreamText("");
+    setActivity({ message: "Thinking through the request" });
     setStreamError(null);
     send.mutate(
       { content },
@@ -273,7 +310,8 @@ export default function ChatPage() {
               </article>
             );
           })}
-          {(activeRun || streamText) && (
+          {activeRun && !streamText && <AgentActivity activity={activity} />}
+          {streamText && (
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
