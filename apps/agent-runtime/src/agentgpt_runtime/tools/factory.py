@@ -1,4 +1,4 @@
-"""Tool Factory meta-tool: a pure proposer the agent calls to emit a tool.
+"""Tool Manager meta-tool: a pure proposer the agent calls to emit a tool.
 
 Registered ONLY when a run carries ``factory_mode=True``. It performs no side
 effects — it returns the proposed manifest + code for the host/UI to surface
@@ -12,7 +12,7 @@ from typing import Any
 from strands import tool
 
 FACTORY_SYSTEM_PROMPT = """\
-You are the Tool Factory. Given the user's request, produce ONE new or revised
+You are the Tool Manager. Given the user's request, produce ONE new or revised
 Strands tool by calling the save_tool function EXACTLY ONCE.
 
 Rules for tool_code:
@@ -78,7 +78,7 @@ def save_tool(
     trusted: bool,
     tool_code: str,
 ) -> dict[str, Any]:
-    """Propose a tool for the Tool Factory. Call EXACTLY ONCE per request.
+    """Propose a tool for the Tool Manager. Call EXACTLY ONCE per request.
 
     Returns the proposal for human review; nothing is written to disk.
     tool_code must be a complete module that exports TOOL.

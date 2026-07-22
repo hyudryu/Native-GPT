@@ -20,10 +20,10 @@ pub struct SendMessage {
     provider_id: Option<String>,
     #[serde(default)]
     model_id: Option<String>,
-    /// Tool Factory: run in factory mode (registers save_tool only).
+    /// Tool Manager: run in factory mode (registers save_tool only).
     #[serde(default)]
     factory_mode: bool,
-    /// Tool Factory revision: the existing tool id to load as context.
+    /// Tool Manager revision: the existing tool id to load as context.
     #[serde(default)]
     factory_revision: Option<String>,
 }
@@ -40,9 +40,9 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// The Tool Factory create prompt (mirrors the Python FACTORY_SYSTEM_PROMPT).
+/// The Tool Manager create prompt (mirrors the Python FACTORY_SYSTEM_PROMPT).
 const FACTORY_CREATE_PROMPT: &str = "\
-You are the Tool Factory. Given the user's request, produce ONE new Strands \
+You are the Tool Manager. Given the user's request, produce ONE new Strands \
 tool by calling the save_tool function EXACTLY ONCE.\n\
 \n\
 Rules for tool_code:\n\
@@ -59,7 +59,7 @@ Think briefly (1-3 sentences) about what the tool should do, then call \
 save_tool with every field filled in. Do not write files; save_tool returns \
 the proposal for a human to review.";
 
-/// Build the Tool Factory system prompt. Create mode uses FACTORY_CREATE_PROMPT;
+/// Build the Tool Manager system prompt. Create mode uses FACTORY_CREATE_PROMPT;
 /// revision mode embeds the existing tool's manifest + source as context and
 /// instructs the model to return the full revised tool_code.
 async fn factory_system_prompt(
@@ -80,7 +80,7 @@ async fn factory_system_prompt(
                 })
                 .unwrap_or_default();
             (
-                "You are the Tool Factory in REVISION mode. Apply the user's \
+                "You are the Tool Manager in REVISION mode. Apply the user's \
                  change to the existing tool below and call save_tool EXACTLY \
                  ONCE with the FULL revised tool_code (not a diff). Keep the \
                  id unchanged.",
@@ -151,7 +151,7 @@ pub async fn send_message(
     };
     let enabled_tools = crate::tools::enabled_tool_ids(&state).await?;
 
-    // Tool Factory: override the system prompt and disable normal tools so the
+    // Tool Manager: override the system prompt and disable normal tools so the
     // sidecar only exposes save_tool. A revision embeds the current tool.
     let factory_mode = body.factory_mode;
     let system_prompt = if factory_mode {

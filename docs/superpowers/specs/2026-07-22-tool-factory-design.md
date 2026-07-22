@@ -1,4 +1,4 @@
-# Tool Factory — Design Spec
+# Tool Manager — Design Spec
 
 **Date:** 2026-07-22
 **Branch:** `feature/tool-factory`
@@ -6,7 +6,7 @@
 
 ## Summary
 
-The Tool Factory lets users create new Strands tools and edit existing ones through the Tools page. A user describes what they want (e.g. "a tool that displays a clock", "a tool that manages a file"); an agent generates a complete, self-contained `tool.py` plus a manifest; the human reviews and hand-edits both in a form + code panel; then saves. Saved tools appear immediately in the tools list. Editing any tool (including the built-ins) is supported, and built-in tools can be rolled back to their shipped defaults.
+The Tool Manager lets users create new Strands tools and edit existing ones through the Tools page. A user describes what they want (e.g. "a tool that displays a clock", "a tool that manages a file"); an agent generates a complete, self-contained `tool.py` plus a manifest; the human reviews and hand-edits both in a form + code panel; then saves. Saved tools appear immediately in the tools list. Editing any tool (including the built-ins) is supported, and built-in tools can be rolled back to their shipped defaults.
 
 ## Goals
 
@@ -26,7 +26,7 @@ The Tool Factory lets users create new Strands tools and edit existing ones thro
 
 | Decision | Choice |
 |---|---|
-| Entry points | "Tool Factory" button at top of Tools page; "Edit" button on each tool card |
+| Entry points | "Tool Manager" button at top of Tools page; "Edit" button on each tool card |
 | Factory surface | Full page with a "← Back to Tools" button |
 | Generation mechanism | Reuse existing agent chat flow with a special system prompt |
 | Save flow | Preview-then-save: form + editable code panel; nothing written until human hits Save |
@@ -40,7 +40,7 @@ The Tool Factory lets users create new Strands tools and edit existing ones thro
 
 ```
 ToolsPage                       ToolFactoryPage (full page)
- ├─ "Tool Factory" button ──────▶ (create mode)
+ ├─ "Tool Manager" button ──────▶ (create mode)
  ├─ tool cards                  ├─ requirement box (create) / revision box (edit)
  │   ├─ enable/disable          ├─ agent transcript (streamed)
  │   ├─ "Edit" button ──────────▶ (edit mode, pre-loaded) ├─ manifest form (editable)
@@ -131,7 +131,7 @@ def save_tool(
     trusted: bool,
     tool_code: str,            # full tool.py source; must export TOOL
 ) -> dict:
-    """Propose a tool for the Tool Factory. Call EXACTLY ONCE per request.
+    """Propose a tool for the Tool Manager. Call EXACTLY ONCE per request.
     Do NOT write files — this returns the proposal for the human to review.
     tool_code must: import strands, define the function, set TOOL = <fn>.
     """
@@ -185,7 +185,7 @@ Add route `/tools/factory` (and `/tools/factory/:id` for edit mode) in `apps/ui/
 
 ### 3b. Tools page changes (`ToolsPage.tsx`)
 
-- Add a **"Tool Factory"** button at the top → navigates to `/tools/factory`.
+- Add a **"Tool Manager"** button at the top → navigates to `/tools/factory`.
 - Add an **"Edit"** button on each tool card → `/tools/factory/:id`.
 - Add a **"Reset to default"** button on cards where `tool.factory_default === true` → calls `POST /api/tools/{id}/rollback`, invalidates the `tools` query.
 - The disabled "marketplace · soon" button stays as-is (out of scope).

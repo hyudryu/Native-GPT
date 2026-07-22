@@ -64,7 +64,7 @@ export interface RunStart {
   enabled_tools?: string[];
   /** When false, the sidecar skips TLS certificate verification. Default true. */
   tls_verify?: boolean;
-  /** When true, the sidecar runs in Tool Factory mode (registers save_tool). */
+  /** When true, the sidecar runs in Tool Manager mode (registers save_tool). */
   factory_mode?: boolean;
   model: { base_url: string; model_id: string; api_key?: string };
 }

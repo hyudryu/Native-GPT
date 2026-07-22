@@ -133,7 +133,7 @@ pub struct RunStart {
     /// See [`EndpointTest::tls_verify`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_verify: Option<bool>,
-    /// When true the sidecar runs in Tool Factory mode (registers save_tool).
+    /// When true the sidecar runs in Tool Manager mode (registers save_tool).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub factory_mode: bool,
     pub model: RunModel,

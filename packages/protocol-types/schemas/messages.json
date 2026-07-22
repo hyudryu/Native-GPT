@@ -122,7 +122,7 @@
           "items": { "type": "string" }
         },
         "tls_verify": { "type": "boolean", "default": true, "description": "When false, the sidecar skips TLS certificate verification for the model server" },
-        "factory_mode": { "type": "boolean", "default": false, "description": "When true, the sidecar runs in Tool Factory mode and registers the save_tool proposer meta-tool" },
+        "factory_mode": { "type": "boolean", "default": false, "description": "When true, the sidecar runs in Tool Manager mode and registers the save_tool proposer meta-tool" },
         "model": {
           "type": "object",
           "required": ["base_url", "model_id"],

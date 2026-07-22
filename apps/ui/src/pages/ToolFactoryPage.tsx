@@ -75,9 +75,9 @@ export default function ToolFactoryPage() {
     setTranscript("");
     setStreaming(true);
     try {
-      // A transient factory conversation scoped to this session.
+      // A transient tool-manager conversation scoped to this session.
       const conv = await createConversation({
-        title: `Factory: ${requirement.slice(0, 40)}`,
+        title: `Tool Manager: ${requirement.slice(0, 40)}`,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
       });
@@ -166,7 +166,7 @@ export default function ToolFactoryPage() {
 
   return (
     <AppPage
-      title={isEdit ? `Edit tool: ${manifest.name || toolId}` : "Tool Factory"}
+      title={isEdit ? `Edit tool: ${manifest.name || toolId}` : "Tool Manager"}
       description={isEdit ? "Revise this tool with the agent or edit the code directly." : "Describe a tool and let the agent build it. Review, then save."}
       icon={ArrowLeft}
       actions={

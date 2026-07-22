@@ -1,8 +1,8 @@
-# Tool Factory Implementation Plan
+# Tool Manager Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let users create and edit Strands tools via an agent-driven Tool Factory, with rollback to built-in defaults.
+**Goal:** Let users create and edit Strands tools via an agent-driven Tool Manager, with rollback to built-in defaults.
 
 **Architecture:** A `save_tool` proposer meta-tool runs inside a `factory_mode` agent run; the human reviews the structured output in a form + code panel, then a REST endpoint writes `tools/<id>/{manifest.json,tool.py}`. Built-in defaults are embedded in the Rust binary via `include_dir` for rollback.
 
@@ -46,14 +46,14 @@
 - [ ] **Step 1:** Add to `RunStart` interface in `packages/protocol-types/src/index.ts`, after the `tls_verify` field (line 66):
 
 ```ts
-  /** When true, the sidecar runs in Tool Factory mode (registers save_tool). */
+  /** When true, the sidecar runs in Tool Manager mode (registers save_tool). */
   factory_mode?: boolean;
 ```
 
 - [ ] **Step 2:** Add to the `run.start` definition in `packages/protocol-types/schemas/messages.json`, after the `tls_verify` property (line 124):
 
 ```json
-        "factory_mode": { "type": "boolean", "default": false, "description": "When true, the sidecar runs in Tool Factory mode and registers the save_tool proposer meta-tool" },
+        "factory_mode": { "type": "boolean", "default": false, "description": "When true, the sidecar runs in Tool Manager mode and registers the save_tool proposer meta-tool" },
 ```
 
 - [ ] **Step 3:** Add a contract test to `packages/protocol-types/src/schemas.test.ts`, inside the existing `describe("protocol schemas", ...)` block, after the tls_verify test:
@@ -104,7 +104,7 @@ git commit -m "Add factory_mode to RunStart protocol type and schema"
 - [ ] **Step 2:** Add `factory_mode` field to `RunStart` in `crates/server/src/protocol.rs`, after the `tls_verify` field (line 135):
 
 ```rust
-    /// When true the sidecar runs in Tool Factory mode (registers save_tool).
+    /// When true the sidecar runs in Tool Manager mode (registers save_tool).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub factory_mode: bool,
 ```
@@ -585,7 +585,7 @@ git commit -m "Embed built-in tool defaults and add rollback endpoint"
 - [ ] **Step 1:** Create `apps/agent-runtime/src/agentgpt_runtime/tools/factory.py`:
 
 ```python
-"""Tool Factory meta-tool: a pure proposer the agent calls to emit a tool.
+"""Tool Manager meta-tool: a pure proposer the agent calls to emit a tool.
 
 Registered ONLY when a run carries `factory_mode=True`. It performs no side
 effects — it returns the proposed manifest + code for the host/UI to surface
@@ -599,7 +599,7 @@ from typing import Any
 from strands import tool
 
 FACTORY_SYSTEM_PROMPT = """\
-You are the Tool Factory. Given the user's request, produce ONE new or revised
+You are the Tool Manager. Given the user's request, produce ONE new or revised
 Strands tool by calling the save_tool function EXACTLY ONCE.
 
 Rules for tool_code:
@@ -618,7 +618,7 @@ for a human to review.
 """
 
 FACTORY_REVISION_PROMPT = """\
-You are the Tool Factory in REVISION mode. The user wants to modify an existing
+You are the Tool Manager in REVISION mode. The user wants to modify an existing
 tool. Below is its current manifest and source. Apply the user's requested
 change and call save_tool EXACTLY ONCE with the FULL revised tool_code (not a
 diff) and updated manifest fields. Keep the id unchanged.
@@ -638,7 +638,7 @@ def save_tool(
     trusted: bool,
     tool_code: str,
 ) -> dict[str, Any]:
-    """Propose a tool for the Tool Factory. Call EXACTLY ONCE per request.
+    """Propose a tool for the Tool Manager. Call EXACTLY ONCE per request.
 
     Returns the proposal for human review; nothing is written to disk.
     tool_code must be a complete module that exports TOOL.
@@ -805,7 +805,7 @@ pub struct SendMessage {
 - [ ] **Step 2:** In `send_message`, after `enabled_tools` is computed (line 92), build the factory system prompt when `body.factory_mode`. Insert before `let created_at = now();` (line 94):
 
 ```rust
-    // Tool Factory: override the system prompt and disable normal tools so
+    // Tool Manager: override the system prompt and disable normal tools so
     // the sidecar only exposes save_tool. A revision embeds the current tool.
     let (factory_mode, system_prompt) = if body.factory_mode {
         let prompt = match &body.factory_revision {
@@ -859,9 +859,9 @@ fn factory_system_prompt(
     state: &SharedState,
 ) -> String {
     let base = if revision_target.is_some() {
-        "You are the Tool Factory in REVISION mode..."
+        "You are the Tool Manager in REVISION mode..."
     } else {
-        "You are the Tool Factory..."
+        "You are the Tool Manager..."
     };
     // For revisions, embed the current tool source as context.
     let context = revision_target
@@ -976,7 +976,7 @@ git commit -m "Add ToolFactory API client helpers and factory_default flag"
 **Files:**
 - Modify: `apps/ui/src/pages/ToolsPage.tsx`
 
-- [ ] **Step 1:** Replace `ToolsPage.tsx` with the version that adds the three buttons. The "Tool Factory" button goes in the `actions` slot; "Edit" and "Reset to default" go on each card. Use `useNavigate` from react-router.
+- [ ] **Step 1:** Replace `ToolsPage.tsx` with the version that adds the three buttons. The "Tool Manager" button goes in the `actions` slot; "Edit" and "Reset to default" go on each card. Use `useNavigate` from react-router.
 
 ```tsx
 import { useNavigate } from "react-router";
@@ -1025,7 +1025,7 @@ export default function ToolsPage() {
             <Store className="size-4" aria-hidden />Browse marketplace · soon
           </button>
           <button type="button" className={primaryButton} onClick={() => navigate("/apps/tools/factory")}>
-            <Wrench className="size-4" aria-hidden />Tool Factory
+            <Wrench className="size-4" aria-hidden />Tool Manager
           </button>
         </>
       }
@@ -1288,7 +1288,7 @@ export default function ToolFactoryPage() {
 
   return (
     <AppPage
-      title={isEdit ? `Edit tool: ${manifest.name || toolId}` : "Tool Factory"}
+      title={isEdit ? `Edit tool: ${manifest.name || toolId}` : "Tool Manager"}
       description={isEdit ? "Revise this tool with the agent or edit the code directly." : "Describe a tool and let the agent build it. Review, then save."}
       icon={ArrowLeft}
       actions={
@@ -1426,7 +1426,7 @@ describe("ToolFactoryPage", () => {
         <ToolFactoryPage />
       </MemoryRouter>,
     );
-    expect(screen.getByText("Tool Factory")).toBeTruthy();
+    expect(screen.getByText("Tool Manager")).toBeTruthy();
     expect(screen.getByText("Create tool")).toBeTruthy();
   });
 });

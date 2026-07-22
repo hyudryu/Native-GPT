@@ -44,7 +44,7 @@ export default function ToolsPage() {
             <Store className="size-4" aria-hidden />Browse marketplace · soon
           </button>
           <button type="button" className={primaryButton} onClick={() => navigate("/apps/tools/factory")}>
-            <Wrench className="size-4" aria-hidden />Tool Factory
+            <Wrench className="size-4" aria-hidden />Tool Manager
           </button>
         </>
       }
