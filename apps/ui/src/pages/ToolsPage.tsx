@@ -36,9 +36,7 @@ export default function ToolsPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {tools.data?.tools.map((tool) => (
           <article key={tool.id} className={panel}>
-            <div className="flex items-start gap-3">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-accent text-white"><Wrench className="size-5" aria-hidden /></span>
-              <div className="min-w-0 flex-1">
+            <div className="min-w-0">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="font-medium">{tool.name}</h2>
                   <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-fg-muted">
@@ -50,7 +48,6 @@ export default function ToolsPage() {
                 <ToolBadges tool={tool} />
                 <p className="mt-3 font-mono text-xs text-fg-subtle">/{tool.folder}/ · v{tool.version}</p>
               </div>
-            </div>
           </article>
         ))}
         {tools.data?.tools.length === 0 && <p className="text-sm text-fg-muted">No tool folders were discovered.</p>}
