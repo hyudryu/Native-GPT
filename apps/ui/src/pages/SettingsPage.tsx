@@ -1,6 +1,7 @@
 import { Link2 } from "lucide-react";
 import { getToken } from "../lib/auth";
 import EndpointsSection from "../features/endpoints/EndpointsSection";
+import RemoteHostsSection from "../features/remote-hosts/RemoteHostsSection";
 import AppearanceSection from "../features/settings/AppearanceSection";
 
 function maskToken(token: string | null): string {
@@ -18,6 +19,8 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
         <EndpointsSection />
+
+        <RemoteHostsSection />
 
         <AppearanceSection />
 
