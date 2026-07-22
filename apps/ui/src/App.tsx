@@ -9,6 +9,7 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import BrainPage from "./pages/BrainPage";
 import KnowledgeDumpPage from "./pages/KnowledgeDumpPage";
 import ToolsPage from "./pages/ToolsPage";
+import ToolFactoryPage from "./pages/ToolFactoryPage";
 import UpdatesPage from "./pages/UpdatesPage";
 
 export default function App() {
@@ -26,6 +27,8 @@ export default function App() {
           <Route path="apps/brain" element={<BrainPage />} />
           <Route path="apps/knowledge-dump" element={<KnowledgeDumpPage />} />
           <Route path="apps/tools" element={<ToolsPage />} />
+          <Route path="apps/tools/factory" element={<ToolFactoryPage />} />
+          <Route path="apps/tools/factory/:toolId" element={<ToolFactoryPage />} />
           <Route path="apps/updates" element={<UpdatesPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
