@@ -1,6 +1,7 @@
 import { HashRouter, Route, Routes } from "react-router";
 import AppShell from "./layout/AppShell";
 import ChatPage from "./pages/ChatPage";
+import ProjectPage from "./pages/ProjectPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import { useDataChangedSync } from "./lib/useDataChangedSync";
@@ -19,6 +20,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route index element={<ChatPage />} />
           <Route path="conversations/:conversationId" element={<ChatPage />} />
+          <Route path="projects/:projectId" element={<ProjectPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="apps/analytics" element={<AnalyticsPage />} />
           <Route path="apps/brain" element={<BrainPage />} />
