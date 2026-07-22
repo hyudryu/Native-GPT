@@ -77,4 +77,16 @@ describe("protocol schemas", () => {
       expect(definition.required ?? []).not.toContain("tls_verify");
     }
   });
+
+  it("threads optional factory_mode through the run.start payload", () => {
+    const messages = schema("messages.json") as {
+      $defs: Record<
+        string,
+        { properties?: Record<string, { type?: string }>; required?: string[] }
+      >;
+    };
+    const definition = messages.$defs["run.start"];
+    expect(definition.properties?.factory_mode?.type).toBe("boolean");
+    expect(definition.required ?? []).not.toContain("factory_mode");
+  });
 });
