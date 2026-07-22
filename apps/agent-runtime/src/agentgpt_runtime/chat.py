@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -96,6 +97,59 @@ class ChatRuns:
             active.agent.cancel()
         return make_envelope("run.cancelled", request_id, {"run_id": run_id})
 
+    def _emit_tool_events(
+        self,
+        event: dict,
+        run_id: str,
+        request_id: str,
+        sequence: int,
+        pending_tools: dict[str, str],
+        emitted_calls: set[str],
+    ) -> int:
+        """Translate Strands tool_use/tool_result stream events into run.tool_call / run.tool_result envelopes.
+
+        Returns the updated sequence number. See the Strands event map at the
+        top of this module for the source shapes.
+        """
+        for call in tool_call_from_event(event):
+            if call.call_id in emitted_calls:
+                continue
+            emitted_calls.add(call.call_id)
+            pending_tools[call.call_id] = call.tool
+            self._emit(
+                make_envelope(
+                    "run.tool_call",
+                    request_id,
+                    {
+                        "run_id": run_id,
+                        "call_id": call.call_id,
+                        "tool": call.tool,
+                        "input": call.input,
+                    },
+                ).model_copy(update={"sequence": sequence})
+            )
+            sequence += 1
+        for result in tool_result_from_event(event):
+            tool_name = pending_tools.pop(result.call_id, result.tool)
+            self._emit(
+                make_envelope(
+                    "run.tool_result",
+                    request_id,
+                    {
+                        "run_id": run_id,
+                        "call_id": result.call_id,
+                        "tool": tool_name,
+                        "ok": result.ok,
+                        "summary": result.summary,
+                        "data": result.data,
+                        "error": result.error,
+                        "retryable": False,
+                    },
+                ).model_copy(update={"sequence": sequence})
+            )
+            sequence += 1
+        return sequence
+
     def _worker(self, payload: RunStartPayload, request_id: str, active: ActiveRun) -> None:
         try:
             asyncio.run(self._stream(payload, request_id, active))
@@ -151,6 +205,13 @@ class ChatRuns:
         active.agent = agent
         sequence = 0
         result = None
+        # call_id (Strands toolUseId) -> tool name, so we can label each
+        # tool_result with the originating tool. Strands' result message does
+        # not carry the tool name, only the correlation id.
+        pending_tools: dict[str, str] = {}
+        # call_ids for which we have already emitted run.tool_call, so the
+        # per-delta tool_use_stream events don't flood the channel.
+        emitted_calls: set[str] = set()
         self._emit(
             make_envelope(
                 "run.activity",
@@ -163,9 +224,18 @@ class ChatRuns:
             if active.cancelled.is_set():
                 agent.cancel()
                 break
-            text = event.get("data") if isinstance(event, dict) else None
-            if isinstance(event, dict) and event.get("result") is not None:
+            if not isinstance(event, dict):
+                continue
+            if event.get("result") is not None:
                 result = event["result"]
+            sequence = self._emit_tool_events(
+                event,
+                payload.run_id,
+                request_id,
+                sequence,
+                pending_tools,
+                emitted_calls,
+            )
             activity = activity_from_event(event)
             if activity is not None:
                 self._emit(
@@ -176,6 +246,7 @@ class ChatRuns:
                     ).model_copy(update={"sequence": sequence})
                 )
                 sequence += 1
+            text = event.get("data")
             if isinstance(text, str) and text:
                 self._emit(
                     make_envelope(
@@ -224,3 +295,142 @@ def activity_from_event(event: object) -> dict[str, str] | None:
         if isinstance(name, str) and name.strip():
             return {"message": f"Using {name.strip()}", "source": name.strip()}
     return None
+
+
+# ── Strands tool event translation ──────────────────────────────────────────
+#
+# Strands 1.48 surfaces tool invocations in stream_async() via two shapes:
+#
+# 1. Tool CALL — `event["type"] == "tool_use_stream"` with key
+#    `current_tool_use = {toolUseId, name, input}`. `input` is a JSON string
+#    fragment while streaming and only parsed to a dict at content-block stop;
+#    we don't need to wait for the dict form, an empty/placeholder input is
+#    fine for the UI's "Calling X..." indicator.
+#
+# 2. Tool RESULT — only via ToolResultMessageEvent: `event["message"]["content"]`
+#    is a list of `{"toolResult": {toolUseId, status, content: [...]}}`. The
+#    per-tool ToolResultEvent itself is NOT emitted on the public stream.
+#
+# The result dict does not carry the tool name, so we correlate via toolUseId
+# (camelCase) against the pending call list maintained by the streamer.
+
+
+@dataclass
+class ToolCallEvent:
+    """Normalized tool-call extracted from a Strands stream event."""
+
+    call_id: str
+    tool: str
+    input: dict[str, Any]
+
+
+@dataclass
+class ToolResultNormalized:
+    """Normalized tool-result extracted from a Strands ToolResultMessageEvent."""
+
+    call_id: str
+    tool: str
+    ok: bool
+    summary: str
+    data: dict[str, Any]
+    error: dict[str, str] | None
+
+
+def _coerce_input(value: Any) -> dict[str, Any]:
+    """Strands streams `input` as a JSON-string fragment until block stop.
+
+    Be defensive: accept dict, JSON string, or empty, always returning a dict.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return {"_raw": value}
+        return parsed if isinstance(parsed, dict) else {"_value": parsed}
+    return {}
+
+
+def tool_call_from_event(event: Any) -> list[ToolCallEvent]:
+    """Extract 0 or 1 tool-call events from a Strands stream event."""
+    if not isinstance(event, dict):
+        return []
+    tool_use = event.get("current_tool_use")
+    if not isinstance(tool_use, dict):
+        return []
+    call_id = tool_use.get("toolUseId") or tool_use.get("tool_use_id")
+    name = tool_use.get("name") or tool_use.get("tool_name")
+    if not isinstance(call_id, str) or not isinstance(name, str) or not name:
+        return []
+    return [ToolCallEvent(call_id=call_id, tool=name, input=_coerce_input(tool_use.get("input")))]
+
+
+def _summary_from_content(content: list) -> str:
+    """Flatten Strands ToolResult.content into a one-line summary."""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+            continue
+        # Fall back to JSON for image/document/json blocks.
+        for key in ("json", "image", "document"):
+            if key in block:
+                try:
+                    parts.append(json.dumps(block[key], ensure_ascii=False)[:200])
+                except (TypeError, ValueError):
+                    parts.append(f"<{key}>")
+    summary = " ".join(parts).strip()
+    if len(summary) > 200:
+        summary = summary[:199] + "…"
+    return summary or "<no output>"
+
+
+def tool_result_from_event(event: Any) -> list[ToolResultNormalized]:
+    """Extract 0..N tool-result events from a Strands ToolResultMessageEvent."""
+    if not isinstance(event, dict):
+        return []
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    results: list[ToolResultNormalized] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        tool_result = block.get("toolResult")
+        if not isinstance(tool_result, dict):
+            continue
+        call_id = tool_result.get("toolUseId") or tool_result.get("tool_use_id")
+        if not isinstance(call_id, str):
+            continue
+        ok = tool_result.get("status") == "success"
+        inner_content = tool_result.get("content")
+        if not isinstance(inner_content, list):
+            inner_content = []
+        summary = _summary_from_content(inner_content)
+        if ok:
+            error: dict[str, str] | None = None
+            data = {"content": inner_content}
+            structured = tool_result.get("structuredContent")
+            if isinstance(structured, dict):
+                data["structured"] = structured
+        else:
+            error = {"code": "tool_error", "message": summary}
+            data = {}
+        results.append(
+            ToolResultNormalized(
+                call_id=call_id,
+                tool=tool_result.get("name", "") or "",
+                ok=ok,
+                summary=summary,
+                data=data,
+                error=error,
+            )
+        )
+    return results

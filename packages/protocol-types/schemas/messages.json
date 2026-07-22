@@ -176,6 +176,47 @@
       },
       "additionalProperties": false
     },
+    "run.tool_call": {
+      "type": "object",
+      "description": "A tool invocation is starting: the model selected a tool and supplied arguments.",
+      "required": ["run_id", "call_id", "tool", "input"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "call_id": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "input": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "run.tool_result": {
+      "type": "object",
+      "description": "A tool invocation finished. Matches the standard tool result schema minus artifacts/citations/warnings (added when artifact tools exist).",
+      "required": ["run_id", "call_id", "tool", "ok", "summary"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "call_id": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "ok": { "type": "boolean" },
+        "summary": { "type": "string" },
+        "data": { "type": "object" },
+        "error": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "type": "string" },
+                "message": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "retryable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "run.completed": {
       "type": "object",
       "required": ["run_id"],

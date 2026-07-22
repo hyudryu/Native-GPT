@@ -62,6 +62,28 @@ fn main() {
             }
             for (kind, payload) in [
                 (
+                    "run.tool_call",
+                    serde_json::json!({
+                        "run_id": env.payload["run_id"],
+                        "call_id": "fake-call-1",
+                        "tool": "current_time",
+                        "input": {"timezone": "UTC"}
+                    }),
+                ),
+                (
+                    "run.tool_result",
+                    serde_json::json!({
+                        "run_id": env.payload["run_id"],
+                        "call_id": "fake-call-1",
+                        "tool": "current_time",
+                        "ok": true,
+                        "summary": "2026-01-01T00:00:00+00:00",
+                        "data": {"content": [{"text": "2026-01-01T00:00:00+00:00"}]},
+                        "error": null,
+                        "retryable": false
+                    }),
+                ),
+                (
                     "run.text_delta",
                     serde_json::json!({"run_id": env.payload["run_id"], "text": "fake reply"}),
                 ),

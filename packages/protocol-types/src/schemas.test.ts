@@ -24,4 +24,12 @@ describe("protocol schemas", () => {
     expect(messages.$defs).toHaveProperty("run.failed");
     expect(messages.$defs).toHaveProperty("run.cancelled");
   });
+
+  it("defines tool-call streaming events", () => {
+    const messages = schema("messages.json") as {
+      $defs: Record<string, unknown>;
+    };
+    expect(messages.$defs).toHaveProperty("run.tool_call");
+    expect(messages.$defs).toHaveProperty("run.tool_result");
+  });
 });

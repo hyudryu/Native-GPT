@@ -1,0 +1,8 @@
+{
+  "id": "calculate",
+  "name": "Calculator",
+  "description": "Evaluates a mathematical expression safely (arithmetic, parentheses, sqrt/log/sin/etc.). Use for arithmetic instead of guessing.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true
+}
