@@ -4,5 +4,6 @@
   "description": "Reads text from a file under the repository root, with offset/length paging. Rejects path traversal, binary files, and files over a size cap.",
   "version": "1.0.0",
   "trusted": true,
-  "default_enabled": true
+  "default_enabled": true,
+  "risk": "read"
 }

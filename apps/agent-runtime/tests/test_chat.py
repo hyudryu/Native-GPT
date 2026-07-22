@@ -7,6 +7,7 @@ import pytest
 from agentgpt_runtime.chat import (
     ChatRuns,
     activity_from_event,
+    approval_allowed_tools,
     build_openai_model,
     openai_base_url,
     strands_messages,
@@ -37,6 +38,34 @@ def test_cancel_unknown_run_returns_protocol_error() -> None:
     response = runs.cancel("missing", "request-1")
     assert response.type == "error"
     assert response.payload["code"] == "run_not_found"
+
+
+def test_resolve_approval_unknown_id_returns_false() -> None:
+    runs = ChatRuns(lambda _event: None)
+    assert runs.resolve_approval("never-pending", approved=True) is False
+
+
+def test_approval_allowed_tools_gates_only_manifest_flagged() -> None:
+    ids = ["calculate", "shell-execute", "delete-file"]
+    tools = [
+        SimpleNamespace(tool_name="calculate"),
+        SimpleNamespace(tool_name="shell_execute"),
+        SimpleNamespace(tool_name="delete_file"),
+    ]
+    manifests = {
+        "calculate": {"risk": "read"},
+        "shell-execute": {"requires_approval": True},
+        "delete-file": {"requires_approval": True},
+    }
+    assert approval_allowed_tools(ids, tools, manifests) == ["calculate"]
+
+
+def test_approval_allowed_tools_absent_flag_means_no_gate() -> None:
+    ids = ["write-file"]
+    # No tool_name attribute: falls back to the id with hyphens as underscores.
+    tools = [SimpleNamespace(tool_name=None)]
+    manifests = {"write-file": {"requires_approval": False}}
+    assert approval_allowed_tools(ids, tools, manifests) == ["write_file"]
 
 
 def test_usage_is_normalized_from_strands_metrics() -> None:

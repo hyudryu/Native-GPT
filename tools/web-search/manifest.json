@@ -4,5 +4,6 @@
   "description": "Searches the web (DuckDuckGo, no API key) and returns titles, URLs, and snippets for up to `max_results` results.",
   "version": "1.0.0",
   "trusted": true,
-  "default_enabled": true
+  "default_enabled": true,
+  "risk": "read"
 }

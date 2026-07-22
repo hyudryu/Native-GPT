@@ -8,8 +8,10 @@ import {
   LoaderCircle,
   Plus,
   SendHorizontal,
+  ShieldAlert,
   X,
 } from "lucide-react";
+import { PROTOCOL_VERSION } from "@agentgpt/protocol-types";
 import {
   messageText,
   modelOptionValue,
@@ -42,6 +44,14 @@ type ToolCallEntry = {
   summary?: string;
   data?: unknown;
   error?: { code: string; message: string } | null;
+};
+
+/** A pending human-in-the-loop approval prompt for a gated tool call. */
+type ApprovalPrompt = {
+  approvalId: string;
+  tool: string;
+  input?: unknown;
+  prompt: string;
 };
 
 /**
@@ -164,6 +174,53 @@ function AgentActivity({ activity }: { activity: Activity }) {
           aria-hidden
         />
         <span className="min-w-0 truncate text-sm">{source}</span>
+      </div>
+    </section>
+  );
+}
+
+function ApprovalBanner({
+  approval,
+  onDecide,
+}: {
+  approval: ApprovalPrompt;
+  onDecide: (approved: boolean) => void;
+}) {
+  return (
+    <section
+      aria-label="Approval required"
+      className="mr-auto w-full max-w-2xl rounded-xl border border-warning bg-warning-subtle p-4 text-sm"
+    >
+      <div className="flex items-center gap-2 font-medium text-fg">
+        <ShieldAlert className="size-4 shrink-0 text-warning" aria-hidden />
+        <span>
+          Approve <span className="font-mono">{approval.tool}</span>?
+        </span>
+      </div>
+      <p className="mt-2 text-fg-muted">
+        The agent wants to run a tool that requires your approval. Review the
+        input before deciding.
+      </p>
+      {approval.input !== undefined && (
+        <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-surface-1 p-2 font-mono text-xs leading-relaxed text-fg">
+          {JSON.stringify(approval.input, null, 2)}
+        </pre>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => onDecide(true)}
+          className="min-h-11 rounded-xl bg-accent px-4 text-sm font-medium text-accent-contrast hover:bg-accent-hover"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          onClick={() => onDecide(false)}
+          className="min-h-11 rounded-xl border border-border px-4 text-sm text-danger hover:bg-danger-subtle"
+        >
+          Deny
+        </button>
       </div>
     </section>
   );
@@ -350,6 +407,7 @@ export default function ChatPage() {
   const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
   const [streamError, setStreamError] = useState<string | null>(null);
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
+  const [approval, setApproval] = useState<ApprovalPrompt | null>(null);
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -460,10 +518,37 @@ export default function ChatPage() {
         ),
       );
     });
+    const offApprovalNeeded = socket.on("run.approval_needed", (envelope) => {
+      const payload = envelope.payload as Record<string, unknown>;
+      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
+      const next: ApprovalPrompt = {
+        approvalId: payload.approval_id,
+        tool: typeof payload.tool === "string" ? payload.tool : "tool",
+        input: payload.input,
+        prompt:
+          typeof payload.prompt === "string" ? payload.prompt : "Approve this tool call?",
+      };
+      setApproval((current) => {
+        // Strands runs tools sequentially, so a second prompt means the first
+        // was orphaned (e.g. its resolution event was missed) — replace it.
+        if (current) {
+          console.warn(`replacing unresolved approval ${current.approvalId}`);
+        }
+        return next;
+      });
+    });
+    const offApprovalResolved = socket.on("run.approval_resolved", (envelope) => {
+      const payload = envelope.payload as Record<string, unknown>;
+      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
+      setApproval((current) =>
+        current && current.approvalId === payload.approval_id ? null : current,
+      );
+    });
     const offCompleted = socket.on("run.completed", (envelope) => {
       const payload = envelope.payload as Record<string, unknown>;
       if (!matches(envelope.request_id, payload)) return;
       setActiveRun(null);
+      setApproval(null);
       void queryClient
         .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
         .then(() => setStreamText(""));
@@ -474,6 +559,7 @@ export default function ChatPage() {
       const error = payload.error as { message?: string } | undefined;
       setStreamError(error?.message ?? "The response failed.");
       setActiveRun(null);
+      setApproval(null);
       // The host persists any partial assistant text on failure/cancel — refetch.
       void queryClient
         .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
@@ -484,6 +570,8 @@ export default function ChatPage() {
       offActivity();
       offToolCall();
       offToolResult();
+      offApprovalNeeded();
+      offApprovalResolved();
       offCompleted();
       offFailed();
     };
@@ -503,7 +591,7 @@ export default function ChatPage() {
   useEffect(() => {
     contentChangedAtRef.current = performance.now();
     return () => cancelAnimationFrame(rafIdRef.current);
-  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval]);
 
   // Scroll-to-bottom after every paint whenever content changes.
   useLayoutEffect(() => {
@@ -511,7 +599,7 @@ export default function ChatPage() {
     const el = scrollContainerRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: "auto" });
-  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval]);
 
   // Disable auto-scroll when the user manually scrolls away from the bottom.
   useEffect(() => {
@@ -570,6 +658,21 @@ export default function ChatPage() {
       id: conversationId,
       input: { endpoint_id: selected.provider_id, model_id: selected.model_id },
     });
+  };
+
+  // Forward the user's decision to the sidecar via WS (host relays any
+  // envelope). The sidecar's run.approval_resolved broadcast confirms; we
+  // clear optimistically since a repeated resolve is a harmless no-op.
+  const decideApproval = (approved: boolean) => {
+    if (!approval) return;
+    socket.send({
+      protocol: PROTOCOL_VERSION,
+      type: "run.approve",
+      request_id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      payload: { approval_id: approval.approvalId, approved },
+    });
+    setApproval(null);
   };
 
   const submit = (event: React.FormEvent) => {
@@ -665,7 +768,8 @@ export default function ChatPage() {
             );
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
-          {activeRun && !streamText && <AgentActivity activity={activity} />}
+          {activeRun && approval && <ApprovalBanner approval={approval} onDecide={decideApproval} />}
+          {activeRun && !approval && !streamText && <AgentActivity activity={activity} />}
           {streamText && (
             <article
               aria-label="assistant message streaming"

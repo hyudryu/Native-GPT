@@ -4,5 +4,6 @@
   "description": "Fetches a URL and returns content as markdown, plain text, or raw HTML. Blocks private/loopback IPs to prevent SSRF.",
   "version": "1.0.0",
   "trusted": true,
-  "default_enabled": true
+  "default_enabled": true,
+  "risk": "read"
 }

@@ -6,12 +6,21 @@ import asyncio
 import json
 import logging
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentgpt_runtime.protocol import Envelope, RunStartPayload, make_envelope, make_error
-from agentgpt_runtime.tools import load_tools
+from agentgpt_runtime.approvals import ApprovalRegistry
+from agentgpt_runtime.protocol import (
+    TYPE_RUN_APPROVAL_NEEDED,
+    TYPE_RUN_APPROVAL_RESOLVED,
+    Envelope,
+    RunStartPayload,
+    make_envelope,
+    make_error,
+)
+from agentgpt_runtime.tools import load_tool_manifests, load_tools
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,51 @@ def build_openai_model(payload: RunStartPayload) -> Any:
     return OpenAIModel(client=client, model_id=payload.model.model_id, stream=True)
 
 
+def approval_allowed_tools(
+    tool_ids: list[str],
+    tools: list[Any],
+    manifests: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Strands tool names that may run WITHOUT a user-approval prompt.
+
+    A tool is gated only when its manifest explicitly sets
+    ``requires_approval: true``; an absent flag means no gate (the manifest
+    schema's default). Names come from the loaded tool objects because Strands
+    registers tools by function name (``shell-execute`` -> ``shell_execute``).
+    """
+    allowed: list[str] = []
+    for tool_id, tool_obj in zip(tool_ids, tools, strict=True):
+        if manifests.get(tool_id, {}).get("requires_approval") is True:
+            continue
+        allowed.append(getattr(tool_obj, "tool_name", None) or tool_id.replace("-", "_"))
+    return allowed
+
+
+def build_approval_intervention(allowed_tools: list[str], ask: Any) -> Any:
+    """HumanInTheLoop that prompts (via `ask`) before any non-allowed tool call.
+
+    Strands' ask callback receives only a prompt string, so the subclass
+    captures the pending ``tool_use`` (name + input) for the
+    ``run.approval_needed`` envelope. Strands executes tools sequentially, so
+    a single pending slot is safe.
+    """
+    from strands.vended_interventions.hitl import HumanInTheLoop  # noqa: PLC0415
+
+    class _UiHumanInTheLoop(HumanInTheLoop):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.pending_tool_use: dict[str, Any] | None = None
+
+        async def before_tool_call(self, event: Any, **kwargs: Any) -> Any:
+            self.pending_tool_use = getattr(event, "tool_use", None)
+            try:
+                return await super().before_tool_call(event, **kwargs)
+            finally:
+                self.pending_tool_use = None
+
+    return _UiHumanInTheLoop(allowed_tools=allowed_tools, ask=ask)
+
+
 def strands_messages(history: list[Any]) -> list[dict[str, Any]]:
     return [
         {"role": item.role, "content": [{"text": item.content}]}
@@ -99,6 +153,7 @@ class ChatRuns:
         self._emit = emit
         self._runs: dict[str, ActiveRun] = {}
         self._lock = threading.Lock()
+        self._approvals = ApprovalRegistry()
 
     def start(self, payload: RunStartPayload, request_id: str) -> Envelope:
         with self._lock:
@@ -125,9 +180,21 @@ class ChatRuns:
         if active is None:
             return make_error(request_id, "run_not_found", f"active run {run_id} not found")
         active.cancelled.set()
+        # Deny any pending approval prompt so the UI doesn't dangle after Stop.
+        denied = self._approvals.cancel_run(run_id)
+        if denied:
+            logger.info("run %s: denied %d pending approval(s) on cancel", run_id, denied)
         if active.agent is not None:
             active.agent.cancel()
         return make_envelope("run.cancelled", request_id, {"run_id": run_id})
+
+    def resolve_approval(self, approval_id: str, approved: bool) -> bool:
+        """Bridge a UI `run.approve` decision to the waiting run.
+
+        Returns False when the approval_id is unknown (already resolved, or
+        the run ended) so the dispatcher can report a no-op.
+        """
+        return self._approvals.resolve(approval_id, approved)
 
     def _emit_tool_events(
         self,
@@ -214,11 +281,69 @@ class ChatRuns:
         from strands import Agent  # noqa: PLC0415
 
         model = build_openai_model(payload)
+        tools = load_tools(payload.enabled_tools)
+        manifests = load_tool_manifests(payload.enabled_tools)
+        allowed = approval_allowed_tools(payload.enabled_tools, tools, manifests)
+
+        sequence = 0
+        # The approval gate (HumanInTheLoop). Only tools whose manifest sets
+        # requires_approval: true prompt; everything else runs freely.
+        hitl: Any | None = None
+
+        async def ask_ui(prompt: str, **_: Any) -> str:
+            """Bridge a Strands approval prompt to the UI over NDJSON.
+
+            Emits run.approval_needed, waits for the user's run.approve
+            decision (resolved by the dispatcher thread via ApprovalRegistry),
+            then emits run.approval_resolved so the UI can close the prompt.
+            """
+            nonlocal sequence
+            approval_id = uuid.uuid4().hex
+            tool_use = getattr(hitl, "pending_tool_use", None) or {}
+            raw_input = tool_use.get("input")
+            self._emit(
+                make_envelope(
+                    TYPE_RUN_APPROVAL_NEEDED,
+                    request_id,
+                    {
+                        "run_id": payload.run_id,
+                        "approval_id": approval_id,
+                        "tool": str(tool_use.get("name") or "tool"),
+                        "input": raw_input if isinstance(raw_input, dict) else {},
+                        "prompt": prompt,
+                    },
+                ).model_copy(update={"sequence": sequence})
+            )
+            sequence += 1
+            future = await self._approvals.create(
+                approval_id, payload.run_id, prompt, asyncio.get_running_loop()
+            )
+            approved = await future
+            self._emit(
+                make_envelope(
+                    TYPE_RUN_APPROVAL_RESOLVED,
+                    request_id,
+                    {
+                        "run_id": payload.run_id,
+                        "approval_id": approval_id,
+                        "approved": approved,
+                    },
+                ).model_copy(update={"sequence": sequence})
+            )
+            sequence += 1
+            return "y" if approved else "n"
+
+        interventions: list[Any] = []
+        if len(allowed) < len(tools):
+            hitl = build_approval_intervention(allowed, ask_ui)
+            interventions.append(hitl)
+
         agent = Agent(
             model=model,
             messages=strands_messages(payload.history),
             system_prompt=payload.system_prompt,
-            tools=load_tools(payload.enabled_tools),
+            tools=tools,
+            interventions=interventions,
             # Strands' default callback handler PRINTS streamed text to stdout,
             # which corrupts our NDJSON protocol channel (and crashes on
             # non-ASCII under Windows cp1252). Replace it with a no-op —
@@ -226,7 +351,6 @@ class ChatRuns:
             callback_handler=lambda **_: None,
         )
         active.agent = agent
-        sequence = 0
         result = None
         # call_id (Strands toolUseId) -> tool name, so we can label each
         # tool_result with the originating tool. Strands' result message does

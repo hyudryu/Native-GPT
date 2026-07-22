@@ -1,0 +1,10 @@
+{
+  "id": "move-file",
+  "name": "Move File",
+  "description": "Moves or renames a file inside the repository root. Both source and destination must stay under the root. Atomic on the same filesystem; refuses to overwrite.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

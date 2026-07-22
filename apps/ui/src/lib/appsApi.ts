@@ -3,7 +3,7 @@ import { authFetch } from "./auth";
 
 export interface KnowledgeSource { id: string; title: string; source_type: "paste" | "file" | "url"; source_uri?: string | null; chunk_count: number; created_at: string; }
 export interface KnowledgeMatch { chunk_id: string; source_id: string; source_title: string; position: number; content: string; score: number; }
-export interface ToolInfo { id: string; name: string; description: string; version: string; trusted: boolean; enabled: boolean; folder: string; }
+export interface ToolInfo { id: string; name: string; description: string; version: string; trusted: boolean; enabled: boolean; folder: string; risk?: "read" | "write" | "execute" | "external_side_effect" | null; requires_approval?: boolean | null; network?: "none" | "outbound" | null; timeout_seconds?: number | null; }
 export interface ModelAnalytics { provider_name: string; model_id: string; runs: number; successful_runs: number; input_tokens: number; output_tokens: number; total_tokens: number; average_tokens_per_second: number; average_run_duration_ms: number; }
 export interface AnalyticsResponse { totals: Omit<ModelAnalytics, "provider_name" | "model_id" | "average_run_duration_ms">; models: ModelAnalytics[]; }
 export interface UpdateCheck { current_version: string; latest_version?: string | null; update_available: boolean; release_url: string; release_name?: string | null; release_notes?: string | null; published_at?: string | null; message: string; }

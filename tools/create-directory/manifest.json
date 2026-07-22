@@ -1,0 +1,10 @@
+{
+  "id": "create-directory",
+  "name": "Create Directory",
+  "description": "Creates a directory (and any missing parents) under the repository root. Idempotent: no error if the directory already exists.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

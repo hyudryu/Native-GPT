@@ -76,6 +76,30 @@ export interface RunCancel {
 export interface RunCancelled {
   run_id: string;
 }
+/** A requires_approval tool call is paused until the user decides (sidecar → UI). */
+export interface RunApprovalNeeded {
+  run_id: string;
+  approval_id: string;
+  tool: string;
+  input: Record<string, unknown>;
+  prompt: string;
+}
+/** The user's decision for a pending approval prompt (UI → sidecar). */
+export interface RunApprove {
+  approval_id: string;
+  approved: boolean;
+  reason?: string;
+}
+/** Acknowledgement of run.approve; resolved=false means the approval_id was unknown. */
+export interface RunApproveOk {
+  resolved: boolean;
+}
+/** The prompt closed (approved, denied, or auto-denied on cancel) — dismiss it (sidecar → UI). */
+export interface RunApprovalResolved {
+  run_id: string;
+  approval_id: string;
+  approved: boolean;
+}
 export interface RunTextDelta {
   run_id: string;
   text: string;
@@ -133,6 +157,9 @@ export type StreamEventType =
   | "run.activity"
   | "run.tool_call"
   | "run.tool_result"
+  | "run.approval_needed"
+  | "run.approve"
+  | "run.approval_resolved"
   | "run.text_delta"
   | "run.completed"
   | "run.failed"

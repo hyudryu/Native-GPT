@@ -1,0 +1,12 @@
+{
+  "id": "python-execute",
+  "name": "Python Execute",
+  "description": "Runs Python code in an isolated subprocess. Network disabled by default. Workspace-scoped, timeout-enforced, env cleared. REQUIRES user approval before each call — the user sees the code before it runs.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "execute",
+  "requires_approval": true,
+  "network": "none",
+  "timeout_seconds": 30
+}

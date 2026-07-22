@@ -1,0 +1,10 @@
+{
+  "id": "apply-patch",
+  "name": "Apply Patch",
+  "description": "Applies one or more search-and-replace edits to a file under the repository root. Atomic per file. Safer than write_file for targeted edits — fails cleanly if a `find` string is not present.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

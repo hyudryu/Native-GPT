@@ -160,6 +160,50 @@
       },
       "additionalProperties": false
     },
+    "run.approval_needed": {
+      "type": "object",
+      "description": "Sidecar -> host -> UI: a requires_approval tool call is paused until the user decides.",
+      "required": ["run_id", "approval_id", "tool", "input", "prompt"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "approval_id": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "input": { "type": "object" },
+        "prompt": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "run.approve": {
+      "type": "object",
+      "description": "UI -> host -> sidecar: the user's decision for a pending approval prompt.",
+      "required": ["approval_id", "approved"],
+      "properties": {
+        "approval_id": { "type": "string", "minLength": 1 },
+        "approved": { "type": "boolean" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.approve.ok": {
+      "type": "object",
+      "description": "Sidecar acknowledgement of run.approve; resolved=false means the approval_id was unknown (already resolved or expired).",
+      "required": ["resolved"],
+      "properties": {
+        "resolved": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "run.approval_resolved": {
+      "type": "object",
+      "description": "Sidecar -> host -> UI: the prompt closed (approved, denied, or auto-denied on cancel) so the UI can dismiss it deterministically.",
+      "required": ["run_id", "approval_id", "approved"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "approval_id": { "type": "string", "minLength": 1 },
+        "approved": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "run.text_delta": {
       "type": "object",
       "required": ["run_id", "text"],

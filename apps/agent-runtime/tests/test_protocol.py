@@ -37,6 +37,32 @@ def test_dispatch_unknown_returns_none() -> None:
     assert dispatch(envelope) is None
 
 
+def test_dispatch_run_approve_unknown_id_reports_unresolved() -> None:
+    """run.approve for an unknown approval_id acks with resolved=false."""
+    import agentgpt_runtime.server as server
+    from agentgpt_runtime.chat import ChatRuns
+
+    previous = server.chat_runs
+    server.configure_chat_runs(ChatRuns(lambda _event: None))
+    try:
+        envelope = make_envelope(
+            "run.approve", "req-a1", {"approval_id": "never-pending", "approved": True}
+        )
+        response = dispatch(envelope)
+        assert response is not None
+        assert response.type == "run.approve.ok"
+        assert response.request_id == "req-a1"
+        assert response.payload == {"resolved": False}
+
+        bad = make_envelope("run.approve", "req-a2", {"approved": True})
+        response = dispatch(bad)
+        assert response is not None
+        assert response.type == "error"
+        assert response.payload["code"] == "bad_request"
+    finally:
+        server.chat_runs = previous
+
+
 def test_parse_line_rejects_malformed_json() -> None:
     try:
         parse_line("{nope")

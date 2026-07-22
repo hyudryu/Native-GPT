@@ -27,6 +27,8 @@ from agentgpt_runtime.protocol import (
     TYPE_HELLO_OK,
     TYPE_MODELS_LIST,
     TYPE_MODELS_LIST_OK,
+    TYPE_RUN_APPROVE,
+    TYPE_RUN_APPROVE_OK,
     TYPE_RUN_CANCEL,
     TYPE_RUN_START,
     TYPE_SHUTDOWN,
@@ -36,6 +38,7 @@ from agentgpt_runtime.protocol import (
     HelloOkPayload,
     HelloPayload,
     ModelsListPayload,
+    RunApprovePayload,
     RunCancelPayload,
     RunStartPayload,
     make_envelope,
@@ -149,6 +152,25 @@ def dispatch(envelope: Envelope) -> Envelope | None:
                 envelope.request_id, "runtime_unavailable", "chat runner not configured"
             )
         return chat_runs.cancel(payload.run_id, envelope.request_id)
+
+    if envelope.type == TYPE_RUN_APPROVE:
+        try:
+            payload = RunApprovePayload.model_validate(envelope.payload)
+        except ValidationError as exc:
+            return make_error(
+                envelope.request_id, "bad_request", f"invalid run.approve payload: {exc}"
+            )
+        if chat_runs is None:
+            return make_error(
+                envelope.request_id, "runtime_unavailable", "chat runner not configured"
+            )
+        resolved = chat_runs.resolve_approval(payload.approval_id, payload.approved)
+        if not resolved:
+            # Already resolved or the run ended — report the no-op, don't error.
+            logger.info("run.approve for unknown approval_id %s", payload.approval_id)
+        return make_envelope(
+            TYPE_RUN_APPROVE_OK, envelope.request_id, {"resolved": resolved}
+        )
 
     if envelope.type == TYPE_SHUTDOWN:
         logger.info("shutdown requested (request_id=%s)", envelope.request_id)
