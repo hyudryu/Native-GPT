@@ -56,6 +56,10 @@ pub struct EndpointTest {
     pub api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<u32>,
+    /// When `Some(false)` the sidecar skips TLS certificate verification
+    /// (self-signed/internal CA servers). Absent means verify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_verify: Option<bool>,
 }
 
 /// `endpoint.test.ok` payload.
@@ -80,6 +84,9 @@ pub struct ModelsList {
     pub model_list_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<u32>,
+    /// See [`EndpointTest::tls_verify`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_verify: Option<bool>,
 }
 
 /// One entry of the `models.list.ok` models array.
@@ -123,6 +130,9 @@ pub struct RunStart {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enabled_tools: Vec<String>,
+    /// See [`EndpointTest::tls_verify`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_verify: Option<bool>,
     pub model: RunModel,
 }
 
@@ -190,6 +200,7 @@ mod tests {
             base_url: "http://127.0.0.1:1234".into(),
             api_key: None,
             timeout_seconds: Some(15),
+            tls_verify: None,
         };
         let value = serde_json::to_value(&test).unwrap();
         assert_eq!(
@@ -213,6 +224,60 @@ mod tests {
         .unwrap();
         assert_eq!(list.models.len(), 2);
         assert_eq!(list.models[0].id, "qwen3:8b");
+    }
+
+    #[test]
+    fn tls_verify_serializes_when_set_and_is_omitted_when_absent() {
+        let test = EndpointTest {
+            base_url: "https://selfsigned.local".into(),
+            api_key: None,
+            timeout_seconds: None,
+            tls_verify: Some(false),
+        };
+        let value = serde_json::to_value(&test).unwrap();
+        assert_eq!(
+            value,
+            json!({"base_url": "https://selfsigned.local", "tls_verify": false})
+        );
+
+        let list = ModelsList {
+            base_url: "https://selfsigned.local".into(),
+            api_key: None,
+            model_list_path: None,
+            timeout_seconds: None,
+            tls_verify: Some(false),
+        };
+        assert_eq!(
+            serde_json::to_value(&list).unwrap(),
+            json!({"base_url": "https://selfsigned.local", "tls_verify": false})
+        );
+
+        let run = RunStart {
+            run_id: "run-1".into(),
+            conversation_id: "conv-1".into(),
+            message_id: "msg-1".into(),
+            prompt: "hi".into(),
+            history: vec![],
+            system_prompt: None,
+            enabled_tools: vec![],
+            tls_verify: Some(false),
+            model: RunModel {
+                base_url: "https://selfsigned.local".into(),
+                model_id: "m-1".into(),
+                api_key: None,
+            },
+        };
+        let value = serde_json::to_value(&run).unwrap();
+        assert_eq!(value["tls_verify"], json!(false));
+
+        // Absent (legacy rows all default to verify) stays off the wire so old
+        // sidecars with strict payload validation keep accepting envelopes.
+        let run = RunStart {
+            tls_verify: None,
+            ..run
+        };
+        let value = serde_json::to_value(&run).unwrap();
+        assert!(value.get("tls_verify").is_none());
     }
 
     #[test]

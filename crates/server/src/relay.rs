@@ -59,11 +59,13 @@ pub async fn endpoint_test(
     base_url: &str,
     api_key: Option<String>,
     timeout_seconds: u32,
+    tls_verify: bool,
 ) -> Result<EndpointTestOk, ApiError> {
     let payload = EndpointTest {
         base_url: base_url.to_string(),
         api_key,
         timeout_seconds: Some(timeout_seconds),
+        tls_verify: Some(tls_verify),
     };
     let env = Envelope::new(
         "endpoint.test",
@@ -79,12 +81,14 @@ pub async fn models_list(
     api_key: Option<String>,
     model_list_path: Option<String>,
     timeout_seconds: u32,
+    tls_verify: bool,
 ) -> Result<ModelsListOk, ApiError> {
     let payload = ModelsList {
         base_url: base_url.to_string(),
         api_key,
         model_list_path,
         timeout_seconds: Some(timeout_seconds),
+        tls_verify: Some(tls_verify),
     };
     let env = Envelope::new(
         "models.list",

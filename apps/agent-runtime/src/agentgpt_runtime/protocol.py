@@ -106,6 +106,9 @@ class EndpointTestPayload(BaseModel):
     base_url: str
     api_key: str | None = None
     timeout_seconds: int = Field(default=15, ge=1, le=120)
+    # Secure by default: only an explicit false disables verification
+    # (self-signed/internal CA servers).
+    tls_verify: bool = True
 
 
 class EndpointTestOkPayload(BaseModel):
@@ -126,6 +129,7 @@ class ModelsListPayload(BaseModel):
     api_key: str | None = None
     model_list_path: str = "/v1/models"
     timeout_seconds: int = Field(default=15, ge=1, le=120)
+    tls_verify: bool = True  # see EndpointTestPayload.tls_verify
 
 
 class ModelEntry(BaseModel):
@@ -167,6 +171,7 @@ class RunStartPayload(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
     system_prompt: str | None = None
     enabled_tools: list[str] = Field(default_factory=list)
+    tls_verify: bool = True  # see EndpointTestPayload.tls_verify
     model: RunModel
 
 

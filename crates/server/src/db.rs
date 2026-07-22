@@ -230,6 +230,9 @@ pub struct ResolvedModel {
     pub provider_name: String,
     pub provider_url: String,
     pub model_id: String,
+    /// The provider's TLS verification setting, forwarded to the sidecar so
+    /// chat runs honor it just like endpoint tests and model discovery do.
+    pub tls_verify: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1110,6 +1113,7 @@ impl Db {
             provider_name: provider.name,
             provider_url: provider.base_url,
             model_id,
+            tls_verify: provider.tls_verify,
         })
     }
 

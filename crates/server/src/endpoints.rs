@@ -240,6 +240,7 @@ pub async fn test_endpoint(
         api_key,
         None,
         endpoint.timeout_seconds as u32,
+        endpoint.tls_verify,
     )
     .await;
     let tested_at = chrono::Utc::now().to_rfc3339();
@@ -291,7 +292,15 @@ pub async fn list_models(
     }
 
     let api_key = resolve_api_key(&state, &endpoint);
-    let result = relay::models_list(&state.supervisor, &endpoint.base_url, api_key, None, 15).await;
+    let result = relay::models_list(
+        &state.supervisor,
+        &endpoint.base_url,
+        api_key,
+        None,
+        15,
+        endpoint.tls_verify,
+    )
+    .await;
     match result {
         Ok(list) => {
             state
