@@ -1,0 +1,10 @@
+{
+  "id": "write-file",
+  "name": "Write File",
+  "description": "Writes text to a file under the repository root, replacing any existing content. Atomic (tmp+rename). Creates parent directories by default. Caps content at 1 MB.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

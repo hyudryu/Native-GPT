@@ -1,0 +1,10 @@
+{
+  "id": "delete-file",
+  "name": "Delete File",
+  "description": "Deletes a single file under the repository root. Refuses to delete directories. Use carefully — deletion is permanent.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": true
+}

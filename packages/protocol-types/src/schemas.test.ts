@@ -33,6 +33,36 @@ describe("protocol schemas", () => {
     expect(messages.$defs).toHaveProperty("run.tool_result");
   });
 
+  it("defines the human-in-the-loop approval flow", () => {
+    const messages = schema("messages.json") as {
+      $defs: Record<
+        string,
+        { properties?: Record<string, unknown>; required?: string[] }
+      >;
+    };
+    for (const name of [
+      "run.approval_needed",
+      "run.approve",
+      "run.approve.ok",
+      "run.approval_resolved",
+    ]) {
+      expect(messages.$defs).toHaveProperty(name);
+    }
+    expect(messages.$defs["run.approval_needed"]?.required).toEqual([
+      "run_id",
+      "approval_id",
+      "tool",
+      "input",
+      "prompt",
+    ]);
+    expect(messages.$defs["run.approve"]?.required).toEqual(["approval_id", "approved"]);
+    expect(messages.$defs["run.approval_resolved"]?.required).toEqual([
+      "run_id",
+      "approval_id",
+      "approved",
+    ]);
+  });
+
   it("threads optional tls_verify through endpoint/model/run payloads", () => {
     const messages = schema("messages.json") as {
       $defs: Record<

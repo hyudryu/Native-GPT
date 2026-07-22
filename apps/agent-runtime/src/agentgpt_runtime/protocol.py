@@ -28,6 +28,7 @@ TYPE_ENDPOINT_TEST = "endpoint.test"
 TYPE_MODELS_LIST = "models.list"
 TYPE_RUN_START = "run.start"
 TYPE_RUN_CANCEL = "run.cancel"
+TYPE_RUN_APPROVE = "run.approve"
 
 # Phase 0 response types.
 TYPE_HELLO_OK = "runtime.hello.ok"
@@ -36,6 +37,10 @@ TYPE_ENDPOINT_TEST_OK = "endpoint.test.ok"
 TYPE_MODELS_LIST_OK = "models.list.ok"
 TYPE_RUN_STARTED = "run.started"
 TYPE_RUN_CANCELLED = "run.cancelled"
+TYPE_RUN_APPROVE_OK = "run.approve.ok"
+# Streaming event types emitted during a run (no response expected).
+TYPE_RUN_APPROVAL_NEEDED = "run.approval_needed"
+TYPE_RUN_APPROVAL_RESOLVED = "run.approval_resolved"
 TYPE_ERROR = "error"
 
 _OUTPUT_LOCK = threading.Lock()
@@ -179,6 +184,16 @@ class RunCancelPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
+
+
+class RunApprovePayload(BaseModel):
+    """UI decision for a pending approval prompt (human-in-the-loop gate)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_id: str = Field(min_length=1)
+    approved: bool
+    reason: str | None = None
 
 
 def utc_now_iso() -> str:

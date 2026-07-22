@@ -1,0 +1,12 @@
+{
+  "id": "shell-execute",
+  "name": "Shell Execute",
+  "description": "Runs a single shell command (cmd.exe on Windows, /bin/sh on POSIX) in the repo root. Timeout-enforced, env cleared. REQUIRES user approval before each call — the user sees the exact command before it runs.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "execute",
+  "requires_approval": true,
+  "network": "outbound",
+  "timeout_seconds": 60
+}

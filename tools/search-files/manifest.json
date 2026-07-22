@@ -4,5 +4,6 @@
   "description": "Keyword search across text files under the repository root. Tries ripgrep first; falls back to a pure-Python walk. Returns matching lines with file paths and line numbers.",
   "version": "1.0.0",
   "trusted": true,
-  "default_enabled": true
+  "default_enabled": true,
+  "risk": "read"
 }

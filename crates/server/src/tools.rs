@@ -20,6 +20,18 @@ struct ToolManifest {
     trusted: bool,
     #[serde(default)]
     default_enabled: bool,
+    /// Spec vocabulary: "read" | "write" | "execute" | "external_side_effect".
+    #[serde(default)]
+    risk: Option<String>,
+    /// True when every call must be approved by the user in the UI.
+    #[serde(default)]
+    requires_approval: Option<bool>,
+    /// "none" | "outbound" (informational soft-sandbox policy).
+    #[serde(default)]
+    network: Option<String>,
+    /// Per-tool default execution timeout.
+    #[serde(default)]
+    timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +43,10 @@ pub struct ToolInfo {
     pub trusted: bool,
     pub enabled: bool,
     pub folder: String,
+    pub risk: Option<String>,
+    pub requires_approval: Option<bool>,
+    pub network: Option<String>,
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +115,10 @@ pub async fn list_for_state(state: &SharedState) -> Result<Vec<ToolInfo>, ApiErr
             trusted: manifest.trusted,
             enabled: enabled && manifest.trusted,
             folder,
+            risk: manifest.risk,
+            requires_approval: manifest.requires_approval,
+            network: manifest.network,
+            timeout_seconds: manifest.timeout_seconds,
         });
     }
     Ok(result)
