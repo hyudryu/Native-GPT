@@ -138,6 +138,7 @@ pub async fn send_message(
         system_prompt,
         enabled_tools,
         tls_verify: Some(resolved.tls_verify),
+        factory_mode: false,
         model: crate::protocol::RunModel {
             base_url: resolved.provider_url,
             model_id: resolved.model_id,
