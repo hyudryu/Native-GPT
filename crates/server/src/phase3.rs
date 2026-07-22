@@ -477,6 +477,7 @@ mod tests {
                 content: "Build durable local search".to_string(),
                 status: "completed".to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
+                tool_events_json: None,
             })
             .await
             .unwrap();

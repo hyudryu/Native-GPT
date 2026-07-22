@@ -24,6 +24,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0003_app_hub",
         include_str!("../migrations/0003_app_hub.sql"),
     ),
+    (
+        "0004_tool_events",
+        include_str!("../migrations/0004_tool_events.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +160,10 @@ pub struct MessageRow {
     pub content: String,
     pub status: String,
     pub created_at: String,
+    /// JSON-serialized tool-call trace for runs that emitted any. NULL for
+    /// user/system messages and assistant messages from runs without tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_events_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -310,6 +318,7 @@ fn message_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
         content: row.get("content")?,
         status: row.get("status")?,
         created_at: row.get("created_at")?,
+        tool_events_json: row.get("tool_events_json")?,
     })
 }
 
@@ -352,7 +361,8 @@ const PROJECT_COLUMNS: &str =
     "id, name, instructions, endpoint_id, model_id, created_at, updated_at";
 const CONVERSATION_COLUMNS: &str =
     "id, project_id, title, endpoint_id, model_id, archived_at, created_at, updated_at";
-const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, status, created_at";
+const MESSAGE_COLUMNS: &str =
+    "id, conversation_id, role, content, status, created_at, tool_events_json";
 const RUN_COLUMNS: &str = "id, conversation_id, user_message_id, assistant_message_id, status, \
     endpoint_id, model_id, started_at, completed_at, usage_json, error_json";
 const KNOWLEDGE_SOURCE_COLUMNS: &str =
@@ -863,14 +873,15 @@ impl Db {
         self.call(move |conn| {
             let tx = conn.unchecked_transaction()?;
             tx.execute(
-                &format!("INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)"),
+                &format!("INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)"),
                 params![
                     m.id,
                     m.conversation_id,
                     m.role,
                     m.content,
                     m.status,
-                    m.created_at
+                    m.created_at,
+                    m.tool_events_json
                 ],
             )?;
             tx.execute(
@@ -1485,6 +1496,7 @@ mod tests {
             content: "Discuss sqlite persistence".to_string(),
             status: "completed".to_string(),
             created_at: "2026-07-20T00:01:00Z".to_string(),
+            tool_events_json: None,
         };
         db.insert_message(&message).await.unwrap();
         let run = RunRow {

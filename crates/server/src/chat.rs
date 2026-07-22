@@ -99,6 +99,7 @@ pub async fn send_message(
         content: content.to_string(),
         status: "completed".to_string(),
         created_at: created_at.clone(),
+        tool_events_json: None,
     };
     state.db.insert_message(&user_message).await?;
 
@@ -167,6 +168,10 @@ pub async fn send_message(
     let persistence_run_id = run_id.clone();
     tokio::spawn(async move {
         let mut assistant_text = String::new();
+        // Accumulated tool-call trace for this run. Persisted on the assistant
+        // message when the run terminates, so reloading the conversation shows
+        // which tools the agent used (and their inputs/outputs).
+        let mut tool_events: Vec<Value> = Vec::new();
         loop {
             let event = match events.recv().await {
                 Ok(event) => event,
@@ -185,12 +190,35 @@ pub async fn send_message(
                         assistant_text.push_str(text);
                     }
                 }
+                "run.tool_call" => {
+                    tool_events.push(json!({
+                        "kind": "call",
+                        "sequence": event.sequence,
+                        "call_id": event.payload.get("call_id"),
+                        "tool": event.payload.get("tool"),
+                        "input": event.payload.get("input"),
+                    }));
+                }
+                "run.tool_result" => {
+                    tool_events.push(json!({
+                        "kind": "result",
+                        "sequence": event.sequence,
+                        "call_id": event.payload.get("call_id"),
+                        "tool": event.payload.get("tool"),
+                        "ok": event.payload.get("ok"),
+                        "summary": event.payload.get("summary"),
+                        "data": event.payload.get("data"),
+                        "error": event.payload.get("error"),
+                        "retryable": event.payload.get("retryable"),
+                    }));
+                }
                 "run.completed" | "run.failed" => {
                     persist_terminal_run(
                         &persistence_state,
                         &persistence_run_id,
                         &conversation_id,
                         &assistant_text,
+                        &tool_events,
                         &event,
                     )
                     .await;
@@ -215,6 +243,7 @@ async fn persist_terminal_run(
     run_id: &str,
     conversation_id: &str,
     assistant_text: &str,
+    tool_events: &[Value],
     event: &agentgpt_supervisor::protocol::Envelope,
 ) {
     let Ok(Some(mut run)) = state.db.get_run(run_id).await else {
@@ -242,7 +271,15 @@ async fn persist_terminal_run(
     } else {
         run.usage_json = event.payload.get("usage").map(Value::to_string);
     }
-    if !assistant_text.is_empty() {
+    // Persist the assistant message when there's text OR a tool trace. We
+    // keep the trace even when the run failed mid-tool (e.g. shell_execute
+    // errored before the model replied) — it's how the user sees what broke.
+    let tool_events_json = if tool_events.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(tool_events).unwrap_or_else(|_| "[]".to_string()))
+    };
+    if !assistant_text.is_empty() || tool_events_json.is_some() {
         let assistant = MessageRow {
             id: uuid::Uuid::now_v7().to_string(),
             conversation_id: conversation_id.to_string(),
@@ -250,6 +287,7 @@ async fn persist_terminal_run(
             content: assistant_text.to_string(),
             status: run.status.clone(),
             created_at: now(),
+            tool_events_json: tool_events_json.clone(),
         };
         if state.db.insert_message(&assistant).await.is_ok() {
             run.assistant_message_id = Some(assistant.id);
@@ -421,6 +459,31 @@ mod tests {
                 ["total_tokens"],
             15
         );
+
+        // Phase 1.5: the canned tool_call/tool_result pair the fake_sidecar
+        // emits between run.started and run.text_delta is persisted on the
+        // assistant message as a JSON tool-events trace.
+        let tool_events_json = messages[1].tool_events_json.as_ref().expect(
+            "assistant message from a run with tool events must persist tool_events_json",
+        );
+        let events: Vec<Value> = serde_json::from_str(tool_events_json).unwrap();
+        assert_eq!(events.len(), 2, "one call + one result: {events:?}");
+        assert_eq!(events[0]["kind"], "call");
+        assert_eq!(events[0]["call_id"], "fake-call-1");
+        assert_eq!(events[0]["tool"], "current_time");
+        assert_eq!(events[0]["input"]["timezone"], "UTC");
+        assert_eq!(events[1]["kind"], "result");
+        assert_eq!(events[1]["call_id"], "fake-call-1");
+        assert_eq!(events[1]["ok"], true);
+        assert!(
+            events[1]["summary"]
+                .as_str()
+                .is_some_and(|s| s.contains("2026")),
+            "result summary should carry the canned timestamp: {events:?}"
+        );
+
+        // The user message must NOT carry a tool-events trace.
+        assert!(messages[0].tool_events_json.is_none());
     }
 
     #[tokio::test]

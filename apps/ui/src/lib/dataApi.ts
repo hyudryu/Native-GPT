@@ -36,6 +36,13 @@ export interface Message {
   content_json?: unknown;
   status?: string;
   created_at?: string;
+  /**
+   * JSON-serialized tool-call trace persisted on assistant messages produced
+   * by runs that emitted any tool_call/tool_result events. Absent on
+   * user/system messages and on assistant messages from tool-less runs.
+   * See `parseToolEvents` for safe parsing.
+   */
+  tool_events_json?: string | null;
 }
 
 export interface EnabledModel {
@@ -109,6 +116,67 @@ export function messageText(content: unknown): string {
     if (Array.isArray(object.content)) return messageText(object.content);
   }
   return "";
+}
+
+/**
+ * Shape of a single persisted tool event. Mirrors the JSON written by the
+ * Rust host's chat persistence task (one entry per `run.tool_call` /
+ * `run.tool_result` event). Pair a `call` with its `result` by `call_id`.
+ */
+export type PersistedToolEvent =
+  | {
+      kind: "call";
+      sequence?: number;
+      call_id: string;
+      tool: string;
+      input?: unknown;
+    }
+  | {
+      kind: "result";
+      sequence?: number;
+      call_id: string;
+      tool?: string;
+      ok: boolean;
+      summary?: string;
+      data?: unknown;
+      error?: { code: string; message: string } | null;
+      retryable?: boolean;
+    };
+
+/**
+ * Safely parse a message's `tool_events_json` column. Returns an empty array
+ * for missing/null/malformed payloads — never throws. Callers can render the
+ * result without additional defensive checks.
+ */
+export function parseToolEvents(raw: string | null | undefined): PersistedToolEvent[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (
+      item,
+    ): item is {
+      kind: string;
+      call_id?: unknown;
+      tool?: unknown;
+      input?: unknown;
+      ok?: unknown;
+      summary?: unknown;
+      data?: unknown;
+      error?: unknown;
+      retryable?: unknown;
+      sequence?: unknown;
+    } =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as { kind?: unknown }).kind === "string" &&
+      typeof (item as { call_id?: unknown }).call_id === "string",
+  ) as PersistedToolEvent[];
 }
 
 export function modelOptionValue(model: Pick<EnabledModel, "provider_id" | "model_id">): string {
