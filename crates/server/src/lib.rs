@@ -18,6 +18,7 @@ pub mod ws;
 
 mod analytics;
 mod chat;
+mod defaults;
 mod endpoints;
 mod handlers;
 mod knowledge;
@@ -363,8 +364,10 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/knowledge/search", get(knowledge::search))
         .route("/api/knowledge/{id}", delete(knowledge::delete_source))
         .route("/api/analytics/models", get(analytics::models))
-        .route("/api/tools", get(tools::list))
-        .route("/api/tools/{id}", patch(tools::patch))
+        .route("/api/tools", get(tools::list).post(tools::create))
+        .route("/api/tools/{id}", patch(tools::patch).put(tools::update))
+        .route("/api/tools/{id}/source", get(tools::source))
+        .route("/api/tools/{id}/rollback", post(tools::rollback))
         .route("/api/updates/check", get(updates::check))
         .route("/ws", get(ws::ws_handler))
         .fallback_service(static_service)
