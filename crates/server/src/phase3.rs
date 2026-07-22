@@ -280,6 +280,7 @@ pub async fn create_conversation(
         archived_at: None,
         created_at: now.clone(),
         updated_at: now,
+        message_count: Some(0),
     };
     state.db.insert_conversation(&conversation).await?;
     crate::events::data_changed(

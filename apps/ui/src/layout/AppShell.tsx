@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import ThemeToggle from "../components/ThemeToggle";
+import FileDropOverlay from "../components/FileDropOverlay";
 import WindowTitleBar from "../components/WindowTitleBar";
 import AppsMenu from "../features/apps/AppsMenu";
 import { dialogBackdropCls, dialogPopupCls } from "../components/dialogStyles";
@@ -211,10 +212,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   };
 
   const startConversation = () => {
-    // The home screen is now the composer — no empty conversation is created
-    // until the first message is sent.
+    // Reuse the most-recent empty conversation instead of creating another.
+    // `list_conversations` returns rows ordered by updated_at DESC, so the
+    // first empty (non-archived, zero-message) conversation is the newest.
+    const empty = (conversations.data ?? []).find(
+      (item) => !item.archived_at && (item.message_count ?? 0) === 0,
+    );
     onNavigate?.();
-    navigate("/");
+    if (empty) {
+      navigate(`/conversations/${empty.id}`);
+    } else {
+      navigate("/");
+    }
   };
 
   const removeConversation = (conversation: Conversation) => {
@@ -595,6 +604,7 @@ export default function AppShell() {
 
   return (
     <div className="flex h-dvh flex-col bg-surface-0 text-fg">
+      <FileDropOverlay />
       <WindowTitleBar />
       <div className="flex min-h-0 flex-1">
         <aside

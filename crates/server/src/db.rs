@@ -150,6 +150,12 @@ pub struct ConversationRow {
     pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Number of messages in the conversation. Only populated by
+    /// `list_conversations` (via a correlated COUNT subquery); left `None`
+    /// elsewhere so inserts/updates don't need to compute it. Serialized
+    /// only when present so other responses are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -310,6 +316,10 @@ fn conversation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Conversati
         archived_at: row.get("archived_at")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+        // Only present when the query includes it (list_conversations adds a
+        // `message_count` column); fall back to None otherwise so the shared
+        // mapper works for get/insert/update paths too.
+        message_count: row.get("message_count").unwrap_or(None),
     })
 }
 
@@ -795,10 +805,15 @@ impl Db {
             } else {
                 "archived_at IS NULL"
             };
+            // Include a per-conversation message count so the client can detect
+            // empty conversations (e.g. to reuse one instead of creating a new
+            // one). Correlated subquery keeps it to a single round-trip.
+            let columns_with_count =
+                format!("{CONVERSATION_COLUMNS}, (SELECT COUNT(*) FROM messages WHERE conversation_id = conversations.id) AS message_count");
             let (sql, bind_project) = if project_id.is_some() {
                 (
                     format!(
-                        "SELECT {CONVERSATION_COLUMNS} FROM conversations \
+                        "SELECT {columns_with_count} FROM conversations \
                          WHERE project_id = ? AND {archived_clause} \
                          ORDER BY updated_at DESC, id"
                     ),
@@ -807,7 +822,7 @@ impl Db {
             } else {
                 (
                     format!(
-                        "SELECT {CONVERSATION_COLUMNS} FROM conversations \
+                        "SELECT {columns_with_count} FROM conversations \
                          WHERE {archived_clause} ORDER BY updated_at DESC, id"
                     ),
                     false,
@@ -1079,13 +1094,31 @@ impl Db {
 
         let (provider_id, explicit_model) = match selection {
             Some(selection) => selection,
-            None => self
-                .list_endpoints()
-                .await?
-                .into_iter()
-                .find(|endpoint| endpoint.default_model_id.is_some())
-                .map(|endpoint| (endpoint.id, None))
-                .ok_or_else(|| ModelResolutionError::NotConfigured(conversation_id.to_string()))?,
+            None => {
+                // No conversation- or project-level model is set. Prefer an
+                // endpoint that has a configured default model; otherwise fall
+                // back to any endpoint with at least one enabled (non-hidden)
+                // model so a freshly-created model-less conversation still runs
+                // as long as the user has a usable model configured. Only fail
+                // when there is genuinely no usable model anywhere.
+                if let Some(endpoint) = self
+                    .list_endpoints()
+                    .await?
+                    .into_iter()
+                    .find(|endpoint| endpoint.default_model_id.is_some())
+                {
+                    (endpoint.id, None)
+                } else {
+                    self.list_provider_models(Some(true))
+                        .await?
+                        .into_iter()
+                        .next()
+                        .map(|model| (model.provider_id, Some(model.model_id)))
+                        .ok_or_else(|| {
+                            ModelResolutionError::NotConfigured(conversation_id.to_string())
+                        })?
+                }
+            }
         };
 
         let provider = self
@@ -1342,6 +1375,7 @@ mod tests {
             archived_at: None,
             created_at: "2026-07-20T00:00:00Z".to_string(),
             updated_at: "2026-07-20T00:00:00Z".to_string(),
+            message_count: None,
         }
     }
 
@@ -1616,6 +1650,46 @@ mod tests {
         let enabled = db.list_provider_models(Some(true)).await.unwrap();
         assert_eq!(enabled.len(), 2);
         assert!(enabled.iter().all(|model| model.enabled));
+    }
+
+    /// A model-less conversation should resolve via any endpoint that has an
+    /// enabled model, even when no endpoint has a `default_model_id` set.
+    #[tokio::test]
+    async fn model_resolution_falls_back_to_any_enabled_model() {
+        let t = TestDb::new();
+        let db = t.db();
+        // No default_model_id on either endpoint — the old logic would reject
+        // a model-less conversation with NotConfigured.
+        let endpoint = sample_endpoint("ep-1");
+        db.insert_endpoint(&endpoint).await.unwrap();
+        for model in ["some-model", "other-model"] {
+            db.upsert_model("ep-1", model, "discovered", None)
+                .await
+                .unwrap();
+        }
+        db.insert_conversation(&sample_conversation("c-3", None))
+            .await
+            .unwrap();
+
+        let resolved = db.resolve_conversation_model("c-3").await.unwrap();
+        assert_eq!(resolved.provider_id, "ep-1");
+        assert!(
+            resolved.model_id == "some-model" || resolved.model_id == "other-model",
+            "should resolve to one of the enabled models, got {}",
+            resolved.model_id
+        );
+
+        // Hiding all models on the only endpoint leaves nothing usable.
+        db.set_model_hidden("ep-1", "some-model", true)
+            .await
+            .unwrap();
+        db.set_model_hidden("ep-1", "other-model", true)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.resolve_conversation_model("c-3").await,
+            Err(ModelResolutionError::NotConfigured(_))
+        ));
     }
 
     #[tokio::test]

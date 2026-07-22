@@ -21,7 +21,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export function useKnowledge() { return useQuery({ queryKey: ["knowledge"], queryFn: () => request<{ sources: KnowledgeSource[]; stats: { source_count: number; chunk_count: number } }>("/api/knowledge") }); }
-export function useIngestKnowledge() { const client = useQueryClient(); return useMutation({ mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string }) => request("/api/knowledge", { method: "POST", body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }) }); }
+export function useIngestKnowledge() { const client = useQueryClient(); return useMutation({ mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string; content_b64?: string }) => request("/api/knowledge", { method: "POST", body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }) }); }
 export function useDeleteKnowledge() { const client = useQueryClient(); return useMutation({ mutationFn: (id: string) => request(`/api/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }) }); }
 export function useKnowledgeSearch(query: string) { return useQuery({ queryKey: ["knowledge-search", query], queryFn: () => request<{ query: string; matches: KnowledgeMatch[] }>(`/api/knowledge/search?q=${encodeURIComponent(query)}`), enabled: query.trim().length > 1 }); }
 export function useAnalytics() { return useQuery({ queryKey: ["analytics"], queryFn: () => request<AnalyticsResponse>("/api/analytics/models") }); }

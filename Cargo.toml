@@ -45,6 +45,9 @@ if-addrs = "0.15"
 rand = "0.9"
 rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# Pure-Rust PDF text extraction for Knowledge Dump file uploads.
+pdf-extract = "0.7"
+base64 = "0.22"
 tauri = "2.11"
 tauri-build = "2.6"
 
