@@ -191,6 +191,15 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         }
     }
 
+    // Expose the server's port + token to the agent-runtime sidecar so its
+    // tools (comfyui_generate, openvoice_tts, etc.) can call back to this
+    // server's REST API. Child processes inherit these env vars automatically.
+    // SAFETY: single-threaded startup before any other thread reads env.
+    // The token is the same one used for HTTP auth (ADR-0003); loopback calls
+    // are exempt, but tools send it anyway for non-loopback deployments.
+    unsafe { std::env::set_var("AGENTGPT_SERVER_PORT", port.to_string()) };
+    unsafe { std::env::set_var("AGENTGPT_SERVER_TOKEN", &token) };
+
     let supervisor = Supervisor::new(SupervisorConfig::from_env(
         repo_root.clone(),
         config.idle_timeout,
@@ -342,6 +351,8 @@ pub fn build_router(state: SharedState) -> Router {
             patch(remote_hosts::patch_host).delete(remote_hosts::delete_host),
         )
         .route("/api/remote-hosts/{id}/test", post(remote_hosts::test_host))
+        .route("/api/remote-hosts/generate", post(remote_hosts::generate_comfyui))
+        .route("/api/remote-hosts/tts", post(remote_hosts::generate_openvoice))
         .route(
             "/api/remote-hosts/{host_id}/voices",
             get(remote_hosts::list_voices).post(remote_hosts::upload_voice),

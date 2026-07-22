@@ -451,6 +451,198 @@ pub async fn submit_openvoice_job(
     Ok(result)
 }
 
+// ---- generation endpoints (called by agent tools) ----
+
+#[derive(Debug, Deserialize)]
+pub struct ComfyuiGenerateRequest {
+    #[serde(default)]
+    pub host: Option<String>,
+    pub prompt: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+fn default_kind() -> String {
+    "image".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenvoiceTtsRequest {
+    #[serde(default)]
+    pub host: Option<String>,
+    pub text: String,
+    #[serde(default)]
+    pub voice_id: Option<String>,
+    #[serde(default)]
+    pub accent: Option<String>,
+    #[serde(default)]
+    pub speed: Option<f64>,
+}
+
+/// `POST /api/remote-hosts/generate` — submit a ComfyUI generation job.
+/// Resolves the host (named or default), submits to the bridge, fetches the
+/// resulting bytes, stores a `generated_assets` row, and returns the asset_id.
+pub async fn generate_comfyui(
+    State(state): State<SharedState>,
+    Json(body): Json<ComfyuiGenerateRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let host = body.host.as_deref();
+    let (row, client) = client_for_named_or_default(&state, host).await?;
+
+    let bridge_body = crate::bridge::comfyui_job_body(
+        &body.prompt,
+        &body.kind,
+        body.model.as_deref(),
+        body.size.as_deref(),
+    );
+    let result = client
+        .submit_job("comfyui", &bridge_body, Duration::from_secs(120))
+        .await?;
+
+    let asset_id = store_job_outputs(
+        &state,
+        &row.id,
+        "comfyui",
+        &body.prompt,
+        result.get("job_id").and_then(|v| v.as_str()),
+        &client,
+        result.get("outputs"),
+    )
+    .await?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "asset_id": asset_id,
+        "asset_url": format!("/api/assets/{}", asset_id),
+        "host": row.name,
+        "summary": result.get("summary").and_then(|v| v.as_str())
+            .unwrap_or("generation completed"),
+    })))
+}
+
+/// `POST /api/remote-hosts/tts` — submit an OpenVoice TTS job.
+pub async fn generate_openvoice(
+    State(state): State<SharedState>,
+    Json(body): Json<OpenvoiceTtsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let host = body.host.as_deref();
+    let (row, client) = client_for_named_or_default(&state, host).await?;
+
+    let bridge_body = crate::bridge::openvoice_job_body(
+        &body.text,
+        body.voice_id.as_deref(),
+        body.accent.as_deref(),
+        body.speed,
+    );
+    let result = client
+        .submit_job("openvoice", &bridge_body, Duration::from_secs(60))
+        .await?;
+
+    let asset_id = store_job_outputs(
+        &state,
+        &row.id,
+        "openvoice",
+        &body.text,
+        result.get("job_id").and_then(|v| v.as_str()),
+        &client,
+        result.get("outputs"),
+    )
+    .await?;
+
+    // If a voice_id was used, touch its last_used_at.
+    if let Some(voice_id) = &body.voice_id {
+        let _ = state
+            .db
+            .touch_voice(voice_id, &chrono::Utc::now().to_rfc3339())
+            .await;
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "asset_id": asset_id,
+        "asset_url": format!("/api/assets/{}", asset_id),
+        "host": row.name,
+        "summary": result.get("summary").and_then(|v| v.as_str())
+            .unwrap_or("TTS completed"),
+    })))
+}
+
+/// Fetch output bytes from the bridge and store them as generated_assets.
+/// Returns the first asset's id (there is typically one output per job).
+async fn store_job_outputs(
+    state: &SharedState,
+    host_id: &str,
+    workload: &str,
+    prompt_text: &str,
+    source_ref: Option<&str>,
+    client: &BridgeClient,
+    outputs: Option<&Value>,
+) -> Result<String, ApiError> {
+    let outputs = outputs.unwrap_or(&Value::Null);
+    let outputs_arr = outputs.as_array().ok_or_else(|| {
+        ApiError::bad_gateway("bad_bridge_response", "bridge returned no outputs array")
+    })?;
+
+    let dir = crate::assets::assets_dir(&state.repo_root);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut first_asset_id: Option<String> = None;
+
+    for output in outputs_arr {
+        let asset_token = output
+            .get("asset_token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ApiError::bad_gateway("bad_bridge_response", "output missing asset_token")
+            })?;
+        let kind = output.get("kind").and_then(|v| v.as_str()).unwrap_or("image");
+        let mime_type = output
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let (bytes, detected_mime) = client
+            .fetch_asset_bytes(asset_token, mime_type.as_deref())
+            .await
+            .map_err(|e| e.into_api())?;
+
+        let asset_id = uuid::Uuid::now_v7().to_string();
+        let (storage_path, _abs) = crate::assets::write_asset_bytes(
+            &dir,
+            &asset_id,
+            &bytes,
+            detected_mime.as_deref().or(mime_type.as_deref()),
+        )
+        .map_err(|e| ApiError::internal(format!("failed to write asset: {e}")))?;
+
+        let row = crate::db::GeneratedAssetRow {
+            id: asset_id.clone(),
+            host_id: host_id.to_string(),
+            workload: workload.to_string(),
+            kind: kind.to_string(),
+            message_id: None,
+            prompt_text: Some(prompt_text.to_string()),
+            source_ref: source_ref.map(String::from),
+            storage_path,
+            bytes: Some(bytes.len() as i64),
+            mime_type: detected_mime.or(mime_type),
+            created_at: now.clone(),
+        };
+        state.db.insert_asset(&row).await?;
+
+        if first_asset_id.is_none() {
+            first_asset_id = Some(asset_id);
+        }
+    }
+
+    first_asset_id.ok_or_else(|| {
+        ApiError::bad_gateway("bad_bridge_response", "no outputs produced")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
