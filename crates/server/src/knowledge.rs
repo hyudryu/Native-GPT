@@ -35,6 +35,9 @@ pub struct IngestKnowledge {
     /// the filename used for type detection.
     #[serde(default)]
     content_b64: Option<String>,
+    /// NULL/absent → global source; present → scoped to that project.
+    #[serde(default)]
+    project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +45,16 @@ pub struct SearchKnowledge {
     q: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Scope results to a project's sources plus global sources.
+    #[serde(default)]
+    project_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct KnowledgeListQuery {
+    /// Omit → list global sources only; present → that project's sources.
+    #[serde(default)]
+    project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -60,6 +73,17 @@ fn default_limit() -> usize {
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// Confirm a project exists before scoping a knowledge source to it. Returns
+/// 404 (via ApiError) if it does not, so callers can't write orphan rows.
+async fn validate_project_exists(state: &SharedState, project_id: &str) -> Result<(), ApiError> {
+    state
+        .db
+        .get_project(project_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("project {project_id} not found")))?;
+    Ok(())
 }
 
 fn tokens(text: &str) -> Vec<String> {
@@ -211,12 +235,10 @@ async fn extract_pdf_text(bytes: &[u8]) -> Result<String, ApiError> {
     // `pdf_extract::extract_text_from_mem` does CPU-bound parsing; run it on a
     // blocking thread so the async handler doesn't stall the runtime.
     let owned = bytes.to_vec();
-    let extracted = tokio::task::spawn_blocking(move || {
-        pdf_extract::extract_text_from_mem(&owned)
-    })
-    .await
-    .map_err(|error| ApiError::bad_request(format!("PDF extraction failed: {error}")))?
-    .map_err(|error| ApiError::bad_request(format!("PDF is not readable: {error}")))?;
+    let extracted = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&owned))
+        .await
+        .map_err(|error| ApiError::bad_request(format!("PDF extraction failed: {error}")))?
+        .map_err(|error| ApiError::bad_request(format!("PDF is not readable: {error}")))?;
     Ok(collapse_whitespace(&extracted))
 }
 
@@ -305,12 +327,13 @@ pub async fn search_db(
     state: &SharedState,
     query: &str,
     limit: usize,
+    project_id: Option<&str>,
 ) -> Result<Vec<KnowledgeMatch>, ApiError> {
     let query_vector = vectorize(query);
     if query_vector.iter().all(|value| *value == 0.0) {
         return Ok(Vec::new());
     }
-    let chunks = state.db.list_knowledge_chunks().await?;
+    let chunks = state.db.list_knowledge_chunks(project_id).await?;
     let mut matches = chunks
         .into_iter()
         .filter_map(|chunk| {
@@ -334,8 +357,9 @@ pub async fn search_db(
 pub async fn context_for_prompt(
     state: &SharedState,
     prompt: &str,
+    project_id: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    let matches = search_db(state, prompt, 5).await?;
+    let matches = search_db(state, prompt, 5, project_id).await?;
     if matches.is_empty() {
         return Ok(None);
     }
@@ -357,8 +381,14 @@ pub async fn context_for_prompt(
     )))
 }
 
-pub async fn list_sources(State(state): State<SharedState>) -> Result<Json<Value>, ApiError> {
-    let sources = state.db.list_knowledge_sources().await?;
+pub async fn list_sources(
+    State(state): State<SharedState>,
+    Query(query): Query<KnowledgeListQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let sources = state
+        .db
+        .list_knowledge_sources(query.project_id.as_deref())
+        .await?;
     let chunk_count: i64 = sources.iter().map(|source| source.chunk_count).sum();
     Ok(Json(json!({
         "sources": sources,
@@ -374,7 +404,9 @@ async fn decode_file_content(body: &IngestKnowledge) -> Result<String, ApiError>
     if let Some(encoded) = body.content_b64.as_deref() {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded.trim())
-            .map_err(|error| ApiError::bad_request(format!("content_b64 is not valid base64: {error}")))?;
+            .map_err(|error| {
+                ApiError::bad_request(format!("content_b64 is not valid base64: {error}"))
+            })?;
         if bytes.len() > MAX_SOURCE_BYTES {
             return Err(ApiError::bad_request(
                 "source content exceeds the 2 MB limit",
@@ -406,6 +438,11 @@ pub async fn ingest(
         return Err(ApiError::bad_request(
             "source_type must be paste, file, or url",
         ));
+    }
+    // When a project is supplied, confirm it exists before creating a
+    // source scoped to it, so we never write an orphan project_id.
+    if let Some(id) = body.project_id.as_deref() {
+        validate_project_exists(&state, id).await?;
     }
     let (source_uri, content) = if body.source_type == "url" {
         let value = body
@@ -456,6 +493,7 @@ pub async fn ingest(
         chunk_count: chunks.len() as i64,
         created_at: created_at.clone(),
         updated_at: created_at,
+        project_id: body.project_id,
     };
     state.db.insert_knowledge_source(&source, &chunks).await?;
     Ok((StatusCode::CREATED, Json(json!({ "source": source }))))
@@ -483,7 +521,7 @@ pub async fn search(
     }
     Ok(Json(json!({
         "query": value,
-        "matches": search_db(&state, value, query.limit).await?
+        "matches": search_db(&state, value, query.limit, query.project_id.as_deref()).await?
     })))
 }
 
@@ -532,13 +570,15 @@ mod tests {
                 source_uri: None,
                 content: Some("Rust ownership makes memory safety explicit.".to_string()),
                 content_b64: None,
+                project_id: None,
             }),
         )
         .await
         .unwrap();
         let source_id = created["source"]["id"].as_str().unwrap().to_string();
 
-        let matches = search_db(&rig.state, "Rust memory safety", 5)
+        // Omitting project_id searches global sources only.
+        let matches = search_db(&rig.state, "Rust memory safety", 5, None)
             .await
             .unwrap();
         assert_eq!(matches.len(), 1);
@@ -552,14 +592,14 @@ mod tests {
         assert!(rig
             .state
             .db
-            .list_knowledge_sources()
+            .list_knowledge_sources(None)
             .await
             .unwrap()
             .is_empty());
         assert!(rig
             .state
             .db
-            .list_knowledge_chunks()
+            .list_knowledge_chunks(None)
             .await
             .unwrap()
             .is_empty());
@@ -589,9 +629,8 @@ mod tests {
             source_uri: Some("notes.dat".to_string()),
             content: None,
             // Raw bytes that are neither UTF-8 nor a PDF.
-            content_b64: Some(
-                base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0xfd]),
-            ),
+            content_b64: Some(base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0xfd])),
+            project_id: None,
         };
         let result = decode_file_content(&body).await;
         assert!(result.is_err());
@@ -600,5 +639,81 @@ mod tests {
             message.contains("not valid UTF-8"),
             "expected UTF-8 rejection, got: {message}"
         );
+    }
+
+    #[tokio::test]
+    async fn project_scoped_sources_are_isolated_from_global() {
+        let rig = crate::state::test_state_with_fake_sidecar("token");
+
+        // Create a project to scope a source to.
+        rig.state
+            .db
+            .insert_project(&crate::db::ProjectRow {
+                id: "proj-rag-1".to_string(),
+                name: "RAG project".to_string(),
+                instructions: String::new(),
+                endpoint_id: None,
+                model_id: None,
+                created_at: "2026-07-22T00:00:00Z".to_string(),
+                updated_at: "2026-07-22T00:00:00Z".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Ingest a global source and a project-scoped source with the same
+        // distinctive phrase so we can tell them apart.
+        let (_status_global, _body_global) = ingest(
+            State(rig.state.clone()),
+            Json(IngestKnowledge {
+                title: "Global rust notes".to_string(),
+                source_type: "paste".to_string(),
+                source_uri: None,
+                content: Some("Rust ownership makes memory safety explicit.".to_string()),
+                content_b64: None,
+                project_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let (_status_project, _body_project) = ingest(
+            State(rig.state.clone()),
+            Json(IngestKnowledge {
+                title: "Project rust notes".to_string(),
+                source_type: "paste".to_string(),
+                source_uri: None,
+                content: Some("Rust ownership makes memory safety explicit.".to_string()),
+                content_b64: None,
+                project_id: Some("proj-rag-1".to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Global list excludes project-scoped sources.
+        let global_sources = rig.state.db.list_knowledge_sources(None).await.unwrap();
+        assert_eq!(global_sources.len(), 1);
+        assert!(global_sources[0].project_id.is_none());
+
+        // Project list shows only that project's sources.
+        let project_sources = rig
+            .state
+            .db
+            .list_knowledge_sources(Some("proj-rag-1"))
+            .await
+            .unwrap();
+        assert_eq!(project_sources.len(), 1);
+        assert_eq!(project_sources[0].project_id.as_deref(), Some("proj-rag-1"));
+
+        // Project search returns both its own source and the global one.
+        let project_matches = search_db(&rig.state, "Rust memory safety", 5, Some("proj-rag-1"))
+            .await
+            .unwrap();
+        assert_eq!(project_matches.len(), 2);
+
+        // Global search returns only the global source (project source hidden).
+        let global_matches = search_db(&rig.state, "Rust memory safety", 5, None)
+            .await
+            .unwrap();
+        assert_eq!(global_matches.len(), 1);
     }
 }

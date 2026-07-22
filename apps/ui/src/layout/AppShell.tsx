@@ -376,9 +376,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   return (
                     <li key={project.id}>
                       <div className="flex min-h-10 items-center gap-2 px-3 text-sm font-medium text-fg-muted">
-                        <Folder className="size-4" aria-hidden />
-                        <span className="truncate">{project.name}</span>
-                        <span className="ml-auto text-xs text-fg-subtle">{items.length}</span>
+                        <Folder className="size-4 shrink-0" aria-hidden />
+                        <NavLink
+                          to={`/projects/${project.id}`}
+                          onClick={onNavigate}
+                          className="min-w-0 flex-1 truncate rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-2 hover:text-fg"
+                        >
+                          {project.name}
+                        </NavLink>
+                        <span className="text-xs text-fg-subtle">{items.length}</span>
                         <button
                           type="button"
                           aria-label={`New conversation in ${project.name}`}

@@ -28,6 +28,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_tool_events",
         include_str!("../migrations/0004_tool_events.sql"),
     ),
+    (
+        "0005_project_knowledge",
+        include_str!("../migrations/0005_project_knowledge.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -198,6 +202,9 @@ pub struct KnowledgeSourceRow {
     pub chunk_count: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// NULL = global source (available to all chats); non-null = scoped to
+    /// that project only. See migration 0005.
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +368,19 @@ fn knowledge_source_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Knowle
         chunk_count: row.get("chunk_count")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+        project_id: row.get("project_id")?,
+    })
+}
+
+fn knowledge_chunk_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeChunkRow> {
+    Ok(KnowledgeChunkRow {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        source_title: row.get(2)?,
+        position: row.get(3)?,
+        content: row.get(4)?,
+        embedding_json: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -379,7 +399,7 @@ const MESSAGE_COLUMNS: &str =
 const RUN_COLUMNS: &str = "id, conversation_id, user_message_id, assistant_message_id, status, \
     endpoint_id, model_id, started_at, completed_at, usage_json, error_json";
 const KNOWLEDGE_SOURCE_COLUMNS: &str =
-    "id, title, source_type, source_uri, content, chunk_count, created_at, updated_at";
+    "id, title, source_type, source_uri, content, chunk_count, created_at, updated_at, project_id";
 
 impl Db {
     /// Open (creating parent dirs), set pragmas, run pending migrations.
@@ -1162,7 +1182,7 @@ impl Db {
             tx.execute(
                 &format!(
                     "INSERT INTO knowledge_sources ({KNOWLEDGE_SOURCE_COLUMNS}) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 ),
                 params![
                     source.id,
@@ -1173,6 +1193,7 @@ impl Db {
                     source.chunk_count,
                     source.created_at,
                     source.updated_at,
+                    source.project_id,
                 ],
             )?;
             for chunk in chunks {
@@ -1196,42 +1217,73 @@ impl Db {
         .await
     }
 
-    pub async fn list_knowledge_sources(&self) -> Result<Vec<KnowledgeSourceRow>, DbError> {
+    pub async fn list_knowledge_sources(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<KnowledgeSourceRow>, DbError> {
+        let project_id = project_id.map(str::to_owned);
         self.call(move |conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {KNOWLEDGE_SOURCE_COLUMNS} FROM knowledge_sources \
-                 ORDER BY created_at DESC, id DESC"
-            ))?;
-            let rows = stmt
-                .query_map([], knowledge_source_from_row)?
-                .collect::<Result<Vec<_>, _>>()?;
+            // Some(id) → that project's sources only.
+            // None → global sources only (project_id IS NULL).
+            // This preserves the existing app-wide Knowledge behavior for
+            // callers that omit the project scope.
+            let mut stmt = if project_id.is_some() {
+                conn.prepare(&format!(
+                    "SELECT {KNOWLEDGE_SOURCE_COLUMNS} FROM knowledge_sources \
+                     WHERE project_id = ? ORDER BY created_at DESC, id DESC"
+                ))?
+            } else {
+                conn.prepare(&format!(
+                    "SELECT {KNOWLEDGE_SOURCE_COLUMNS} FROM knowledge_sources \
+                     WHERE project_id IS NULL ORDER BY created_at DESC, id DESC"
+                ))?
+            };
+            let rows = if let Some(id) = &project_id {
+                stmt.query_map(params![id], knowledge_source_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                stmt.query_map([], knowledge_source_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
             Ok(rows)
         })
         .await
     }
 
-    pub async fn list_knowledge_chunks(&self) -> Result<Vec<KnowledgeChunkRow>, DbError> {
+    pub async fn list_knowledge_chunks(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<KnowledgeChunkRow>, DbError> {
+        let project_id = project_id.map(str::to_owned);
         self.call(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT c.id, c.source_id, s.title, c.position, c.content, \
-                        c.embedding_json, c.created_at \
-                 FROM knowledge_chunks c \
-                 JOIN knowledge_sources s ON s.id = c.source_id \
-                 ORDER BY s.created_at DESC, c.position",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(KnowledgeChunkRow {
-                        id: row.get(0)?,
-                        source_id: row.get(1)?,
-                        source_title: row.get(2)?,
-                        position: row.get(3)?,
-                        content: row.get(4)?,
-                        embedding_json: row.get(5)?,
-                        created_at: row.get(6)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
+            // For a project: its own sources plus global (project_id IS NULL).
+            // For global/ungrouped: global sources only.
+            let mut stmt = if project_id.is_some() {
+                conn.prepare(
+                    "SELECT c.id, c.source_id, s.title, c.position, c.content, \
+                            c.embedding_json, c.created_at \
+                     FROM knowledge_chunks c \
+                     JOIN knowledge_sources s ON s.id = c.source_id \
+                     WHERE s.project_id IS NULL OR s.project_id = ? \
+                     ORDER BY s.created_at DESC, c.position",
+                )?
+            } else {
+                conn.prepare(
+                    "SELECT c.id, c.source_id, s.title, c.position, c.content, \
+                            c.embedding_json, c.created_at \
+                     FROM knowledge_chunks c \
+                     JOIN knowledge_sources s ON s.id = c.source_id \
+                     WHERE s.project_id IS NULL \
+                     ORDER BY s.created_at DESC, c.position",
+                )?
+            };
+            let rows = if let Some(id) = &project_id {
+                stmt.query_map(params![id], knowledge_chunk_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                stmt.query_map([], knowledge_chunk_from_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
             Ok(rows)
         })
         .await

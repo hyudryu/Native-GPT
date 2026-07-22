@@ -227,9 +227,23 @@ export function deleteProject(id: string): Promise<void> {
   return request(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function getProject(id: string): Promise<Project> {
+  return (
+    await request<{ project: Project }>(`/api/projects/${encodeURIComponent(id)}`)
+  ).project;
+}
+
 export async function listConversations(): Promise<Conversation[]> {
   return (await request<{ conversations: Conversation[] }>("/api/conversations"))
     .conversations;
+}
+
+export async function listProjectConversations(projectId: string): Promise<Conversation[]> {
+  return (
+    await request<{ conversations: Conversation[] }>(
+      `/api/conversations?project_id=${encodeURIComponent(projectId)}`,
+    )
+  ).conversations;
 }
 
 export async function listArchivedConversations(): Promise<Conversation[]> {
@@ -319,12 +333,21 @@ export async function searchConversations(query: string): Promise<SearchResult[]
 }
 
 const projectsKey = ["projects"] as const;
+const projectKey = (id: string) => ["projects", id] as const;
 const conversationsKey = ["conversations"] as const;
 const conversationKey = (id: string) => ["conversations", id] as const;
 const messagesKey = (id: string) => ["conversations", id, "messages"] as const;
 
 export function useProjects() {
   return useQuery({ queryKey: projectsKey, queryFn: listProjects, staleTime: 30_000 });
+}
+
+export function useProject(id: string | undefined) {
+  return useQuery({
+    queryKey: projectKey(id ?? ""),
+    queryFn: () => getProject(id!),
+    enabled: Boolean(id),
+  });
 }
 
 export function useCreateProject() {
@@ -369,6 +392,19 @@ export function useArchivedConversations() {
     // (which invalidate the "conversations" prefix) refresh this list too.
     queryKey: [...conversationsKey, "archived"],
     queryFn: listArchivedConversations,
+    staleTime: 10_000,
+  });
+}
+
+/**
+ * Conversations scoped to a single project. Nested under the conversations
+ * prefix so cross-cutting mutations (create/archive/delete) refresh this list.
+ */
+export function useProjectConversations(projectId: string | undefined) {
+  return useQuery({
+    queryKey: [...conversationsKey, "project", projectId ?? ""],
+    queryFn: () => listProjectConversations(projectId!),
+    enabled: Boolean(projectId),
     staleTime: 10_000,
   });
 }

@@ -82,7 +82,9 @@ pub async fn send_message(
             .filter(|instructions| !instructions.is_empty()),
         None => None,
     };
-    let knowledge_context = crate::knowledge::context_for_prompt(&state, content).await?;
+    let knowledge_context =
+        crate::knowledge::context_for_prompt(&state, content, conversation.project_id.as_deref())
+            .await?;
     let system_prompt = match (project_prompt, knowledge_context) {
         (Some(project), Some(knowledge)) => Some(format!("{project}\n\n{knowledge}")),
         (Some(project), None) => Some(project),
