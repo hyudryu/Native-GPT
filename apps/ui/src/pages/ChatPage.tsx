@@ -14,6 +14,7 @@ import {
   messageText,
   modelOptionValue,
   parseModelOptionValue,
+  parseToolEvents,
   useCancelRun,
   useConversation,
   useCreateConversation,
@@ -23,6 +24,7 @@ import {
   useSendMessage,
   useUpdateConversation,
   type EnabledModel,
+  type PersistedToolEvent,
   type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
@@ -41,6 +43,49 @@ type ToolCallEntry = {
   data?: unknown;
   error?: { code: string; message: string } | null;
 };
+
+/**
+ * Convert a persisted tool-events trace into the same shape the live
+ * `<ToolCalls>` renderer consumes. Calls and results are paired by `call_id`;
+ * a call with no matching result stays `pending` (e.g. an interrupted run).
+ */
+function toolEntriesFromPersisted(events: PersistedToolEvent[]): ToolCallEntry[] {
+  const byCallId = new Map<string, ToolCallEntry>();
+  // Pass 1: seed from call events so order follows the original call stream.
+  for (const event of events) {
+    if (event.kind !== "call") continue;
+    if (byCallId.has(event.call_id)) continue;
+    byCallId.set(event.call_id, {
+      callId: event.call_id,
+      tool: event.tool,
+      input: event.input,
+      status: "pending",
+    });
+  }
+  // Pass 2: attach results.
+  for (const event of events) {
+    if (event.kind !== "result") continue;
+    const existing = byCallId.get(event.call_id);
+    if (existing) {
+      existing.status = event.ok ? "ok" : "error";
+      existing.summary = event.summary;
+      existing.data = event.data;
+      existing.error = event.error ?? undefined;
+      if (!existing.tool && event.tool) existing.tool = event.tool;
+    } else {
+      // Result without a preceding call event (trace was truncated mid-stream).
+      byCallId.set(event.call_id, {
+        callId: event.call_id,
+        tool: event.tool ?? "tool",
+        status: event.ok ? "ok" : "error",
+        summary: event.summary,
+        data: event.data,
+        error: event.error ?? undefined,
+      });
+    }
+  }
+  return [...byCallId.values()];
+}
 
 function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -594,20 +639,29 @@ export default function ChatPage() {
           {messages.data?.map((message) => {
             const user = message.role === "user";
             const text = messageText(message.content ?? message.content_json);
+            // Phase 1.5: persisted tool-call trace for this assistant message.
+            // Empty for user/system messages and tool-less runs. Parsed
+            // defensively (see parseToolEvents) — malformed JSON degrades to
+            // "no tool calls shown" rather than crashing the conversation view.
+            const historicalToolCalls = user
+              ? []
+              : toolEntriesFromPersisted(parseToolEvents(message.tool_events_json));
             return (
-              <article
-                key={message.id}
-                aria-label={`${message.role} message`}
-                className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                  user
-                    ? "ml-auto bg-accent text-accent-contrast"
-                    : "mr-auto border border-border bg-surface-1 text-fg"
-                }`}
-              >
-                {user
-                  ? <PlainMessage content={text} />
-                  : <MarkdownMessage content={text} />}
-              </article>
+              <div key={message.id} className="contents">
+                {historicalToolCalls.length > 0 && <ToolCalls entries={historicalToolCalls} />}
+                <article
+                  aria-label={`${message.role} message`}
+                  className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                    user
+                      ? "ml-auto bg-accent text-accent-contrast"
+                      : "mr-auto border border-border bg-surface-1 text-fg"
+                  }`}
+                >
+                  {user
+                    ? <PlainMessage content={text} />
+                    : <MarkdownMessage content={text} />}
+                </article>
+              </div>
             );
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
