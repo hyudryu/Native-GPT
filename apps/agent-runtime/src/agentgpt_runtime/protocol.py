@@ -177,6 +177,7 @@ class RunStartPayload(BaseModel):
     system_prompt: str | None = None
     enabled_tools: list[str] = Field(default_factory=list)
     tls_verify: bool = True  # see EndpointTestPayload.tls_verify
+    factory_mode: bool = False
     model: RunModel
 
 
