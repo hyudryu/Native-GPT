@@ -330,7 +330,10 @@ pub async fn list_sources(
     State(state): State<SharedState>,
     Query(query): Query<KnowledgeListQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let sources = state.db.list_knowledge_sources(query.project_id.as_deref()).await?;
+    let sources = state
+        .db
+        .list_knowledge_sources(query.project_id.as_deref())
+        .await?;
     let chunk_count: i64 = sources.iter().map(|source| source.chunk_count).sum();
     Ok(Json(json!({
         "sources": sources,
