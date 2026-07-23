@@ -458,12 +458,40 @@ export function useSendMessage(conversationId: string) {
   return useMutation({
     mutationFn: (input: { content: string; endpoint_id?: string; model_id?: string }) =>
       sendMessage(conversationId, input),
-    onSuccess: ({ message }) => {
+    // Optimistically append the user message so it shows the instant they hit
+    // send, instead of waiting for the POST to return. The placeholder is
+    // swapped for the real persisted message in `onSuccess`, and rolled back in
+    // `onError` (paired with ChatPage restoring the draft text on failure).
+    onMutate: async (input) => {
+      await client.cancelQueries({ queryKey: messagesKey(conversationId) });
+      const previous = client.getQueryData<Message[]>(messagesKey(conversationId));
+      const optimisticId = `__optimistic__:${input.content}:${Date.now()}`;
+      const optimistic: Message = {
+        id: optimisticId,
+        conversation_id: conversationId,
+        role: "user",
+        content: input.content,
+        created_at: new Date().toISOString(),
+      };
+      client.setQueryData<Message[]>(messagesKey(conversationId), (current = []) => [
+        ...current,
+        optimistic,
+      ]);
+      return { previous, optimisticId };
+    },
+    onSuccess: ({ message }, _input, ctx) => {
       client.setQueryData<Message[]>(messagesKey(conversationId), (current = []) => {
-        if (current.some((item) => item.id === message.id)) return current;
-        return [...current, message];
+        // Drop the optimistic placeholder, then dedup-append the real message.
+        const withoutOptimistic = ctx?.optimisticId
+          ? current.filter((item) => item.id !== ctx.optimisticId)
+          : current;
+        if (withoutOptimistic.some((item) => item.id === message.id)) return withoutOptimistic;
+        return [...withoutOptimistic, message];
       });
       void client.invalidateQueries({ queryKey: conversationsKey });
+    },
+    onError: (_err, _input, ctx) => {
+      if (ctx) client.setQueryData<Message[]>(messagesKey(conversationId), ctx.previous);
     },
   });
 }

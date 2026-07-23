@@ -60,20 +60,25 @@ const CodeBlock: FC<{ children?: ReactNode }> = ({ children }) => {
 };
 
 /**
- * Renders a message with markdown support.
+ * Renders a message with markdown support via `react-markdown`.
  *
- * - Non-streaming / completed messages: full markdown rendering via `react-markdown`.
- * - Streaming messages: raw text (markdown may be incomplete mid-stream).
+ * Used for both streaming (live) and persisted assistant messages so formatting
+ * appears progressively as text arrives and stays identical once the run
+ * completes. Incomplete markdown (e.g. an unclosed fence) renders as text
+ * until it becomes valid — matching how ChatGPT/Claude stream.
  *
- * User messages are rendered as plain text — no markdown parsing for user input.
+ * Empty content falls back to "Thinking…" so an active-but-empty bubble shows
+ * something rather than nothing.
+ *
+ * User messages are rendered as plain text (see `PlainMessage`) — no markdown
+ * parsing for user input.
  */
 export const MarkdownMessage: FC<{
   content: string;
-  streaming?: boolean;
   className?: string;
-}> = ({ content, streaming = false, className }) => {
-  if (streaming || !content) {
-    return <>{content || "Thinking…"}</>;
+}> = ({ content, className }) => {
+  if (!content) {
+    return <>Thinking…</>;
   }
 
   return (

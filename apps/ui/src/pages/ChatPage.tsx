@@ -946,14 +946,16 @@ export default function ChatPage() {
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
           {activeRun && approval && <ApprovalBanner approval={approval} onDecide={decideApproval} />}
-          {activeRun && !approval && !streamText && <AgentActivity activity={activity} />}
+          {(send.isPending || activeRun) && !approval && !streamText && (
+            <AgentActivity activity={send.isPending ? { message: "Sending…" } : activity} />
+          )}
           {streamText && (
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
               className="w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
             >
-              {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
+              <MarkdownMessage content={streamText} />
             </article>
           )}
           {(streamError || send.isError) && (
