@@ -88,6 +88,15 @@ function ConversationMenu({
       >
         <Ellipsis className="size-4" aria-hidden />
       </summary>
+      {/* Invisible backdrop: clicking outside the menu dismisses it */}
+      <div
+        className="fixed inset-0 z-20"
+        onClick={(e) => {
+          e.preventDefault();
+          const details = (e.currentTarget as HTMLElement).closest("details");
+          if (details) details.open = false;
+        }}
+      />
       <div
         role="menu"
         aria-label={`Conversation actions for ${conversation.title}`}
@@ -161,6 +170,15 @@ function WorkspaceMenu({ onEdit, onDelete, name }: { onEdit: () => void; onDelet
       <summary aria-label={`Actions for workspace ${name}`} className="flex min-h-9 min-w-9 cursor-pointer list-none items-center justify-center rounded-lg text-fg-subtle hover:bg-surface-2 hover:text-fg [&::-webkit-details-marker]:hidden">
         <Ellipsis className="size-4" aria-hidden />
       </summary>
+      {/* Invisible backdrop: clicking outside the menu dismisses it */}
+      <div
+        className="fixed inset-0 z-20"
+        onClick={(e) => {
+          e.preventDefault();
+          const details = (e.currentTarget as HTMLElement).closest("details");
+          if (details) details.open = false;
+        }}
+      />
       <div role="menu" aria-label={`Workspace actions for ${name}`} className="absolute right-0 top-8 z-30 w-32 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
         <button type="button" role="menuitem" onClick={(event) => { closeDetails(event.currentTarget); onEdit(); }} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg"><Pencil className="size-4" aria-hidden />Edit</button>
         <button type="button" role="menuitem" onClick={(event) => { closeDetails(event.currentTarget); onDelete(); }} className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-sm text-danger hover:bg-danger-subtle"><Trash2 className="size-4" aria-hidden />Delete</button>
