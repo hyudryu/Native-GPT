@@ -6,6 +6,7 @@
 //! (ADR-0003), and relays protocol envelopes to the Python sidecar.
 
 pub mod auth;
+pub mod browser;
 pub mod db;
 pub mod error;
 pub mod events;
@@ -220,9 +221,10 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         repo_root: repo_root.clone(),
         supervisor,
         telemetry: Telemetry::new(),
-        db,
+        db: db.clone(),
         secrets: Arc::new(agentgpt_secure_store::SecureStore::new("agentgpt")),
         host_events: tokio::sync::broadcast::channel(state::HOST_EVENTS_CAPACITY).0,
+        browser: browser::manager::BrowserManager::new(db, repo_root.clone(), port),
     });
 
     // Generate app-data/mcp_servers.json from the remote_hosts table so the
@@ -416,6 +418,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/api/tools/{id}/rollback", post(tools::rollback))
         .route("/api/updates/check", get(updates::check))
         .route("/ws", get(ws::ws_handler))
+        .merge(browser::api_routes())
         .fallback_service(static_service)
         .layer(middleware::from_fn(cache_headers))
         .layer(middleware::from_fn(security_headers))

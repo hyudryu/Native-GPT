@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
+import BrowserHiddenIndicator from "../features/browser/BrowserHiddenIndicator";
 
 export interface WindowDragController {
   startDragging: () => Promise<void>;
@@ -42,6 +43,9 @@ export default function WindowTitleBar() {
         className="flex min-w-0 flex-1 items-center px-3 text-xs font-medium text-fg-muted"
       >
         Native GPT
+      </div>
+      <div className="flex shrink-0 items-center pr-1">
+        <BrowserHiddenIndicator />
       </div>
       <div className="flex shrink-0" aria-label="Window controls">
         <button

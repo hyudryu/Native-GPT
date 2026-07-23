@@ -25,6 +25,9 @@ import ThemeToggle from "../components/ThemeToggle";
 import FileDropOverlay from "../components/FileDropOverlay";
 import WindowTitleBar from "../components/WindowTitleBar";
 import AppsMenu from "../features/apps/AppsMenu";
+import BrowserPanel from "../features/browser/BrowserPanel";
+import BrowserPermissionDialog from "../features/browser/BrowserPermissionDialog";
+import { useBrowserStore } from "../features/browser/browserStore";
 import { dialogBackdropCls, dialogPopupCls } from "../components/dialogStyles";
 import { conversationMarkdown, safeExportName } from "../lib/conversationExport";
 import {
@@ -625,10 +628,12 @@ export default function AppShell() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const mode = useRailModeStore((state) => state.mode);
   const cycle = useRailModeStore((state) => state.cycle);
+  const browserFocus = useBrowserStore((state) => state.mode === "focus");
 
   return (
     <div className="flex h-dvh flex-col bg-surface-0 text-fg">
       <FileDropOverlay />
+      <BrowserPermissionDialog />
       <WindowTitleBar />
       <div className="flex min-h-0 flex-1">
         <aside
@@ -662,7 +667,17 @@ export default function AppShell() {
             <div className="flex-1" />
             <ThemeToggle />
           </header>
-          <main className="min-h-0 flex-1 overflow-hidden"><Outlet /></main>
+          {/* Browser panel lives in AppShell (spec §17) so it survives route
+              changes. The center content shrinks first; the nav rail keeps its
+              width. In focus mode the browser takes the whole content region. */}
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            <main
+              className={`min-h-0 min-w-0 flex-1 overflow-hidden ${browserFocus ? "hidden" : ""}`}
+            >
+              <Outlet />
+            </main>
+            <BrowserPanel />
+          </div>
         </div>
 
         <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}>

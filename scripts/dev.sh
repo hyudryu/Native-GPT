@@ -12,6 +12,7 @@ UI_DEV=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
+    --host) shift 2 ;; # accepted for launcher compatibility; host always binds loopback
     --ui-dev) UI_DEV=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
