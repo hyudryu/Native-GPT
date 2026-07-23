@@ -6,11 +6,13 @@ import {
   Brain,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleStop,
   LoaderCircle,
   Paperclip,
   Plus,
   Puzzle,
+  Search,
   SendHorizontal,
   ShieldAlert,
   Target,
@@ -35,6 +37,7 @@ import {
   type PersistedToolEvent,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import { useTools, type ToolInfo } from "../lib/appsApi";
 import {
   EMPTY_LIVE_RUN,
   useRunStore,
@@ -427,17 +430,96 @@ function ThinkingLevelPicker({
 
 // ── Composer "+" menu ────────────────────────────────────────────────────────
 
+const menuItemClass =
+  "flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm text-fg-muted outline-none data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50";
+
+/**
+ * Right-expanding submenu listing every registered tool with a search box.
+ * Picking a tool attaches it to the composer as a chip.
+ */
+function ToolsSubmenu({ onPickTool }: { onPickTool: (tool: ToolInfo) => void }) {
+  const tools = useTools();
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const all = tools.data?.tools ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (tool) =>
+        tool.name.toLowerCase().includes(q) ||
+        tool.id.toLowerCase().includes(q) ||
+        tool.description.toLowerCase().includes(q),
+    );
+  }, [tools.data, query]);
+
+  return (
+    <Menu.SubmenuRoot onOpenChange={(open) => !open && setQuery("")}>
+      <Menu.SubmenuTrigger className={menuItemClass}>
+        <Wrench className="size-4 shrink-0" aria-hidden />
+        Tools
+        <ChevronRight className="ml-auto size-4 shrink-0 text-fg-subtle" aria-hidden />
+      </Menu.SubmenuTrigger>
+      <Menu.Portal>
+        <Menu.Positioner side="right" align="start" sideOffset={4} className="z-50">
+          <Menu.Popup className="w-64 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+            <div className="mb-1 flex items-center gap-2 border-b border-border px-2 py-1.5">
+              <Search className="size-3.5 shrink-0 text-fg-subtle" aria-hidden />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => event.stopPropagation()}
+                placeholder="Search tools…"
+                aria-label="Search tools"
+                className="w-full bg-transparent text-sm text-fg no-focus-ring placeholder:text-fg-subtle"
+              />
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {tools.isPending && (
+                <p className="px-3 py-2 text-xs text-fg-muted">Loading tools…</p>
+              )}
+              {tools.isError && (
+                <p role="alert" className="px-3 py-2 text-xs text-danger">Could not load tools.</p>
+              )}
+              {tools.isSuccess && filtered.length === 0 && (
+                <p className="px-3 py-2 text-xs text-fg-muted">No tools match.</p>
+              )}
+              {filtered.map((tool) => (
+                <Menu.Item
+                  key={tool.id}
+                  className="flex min-h-9 cursor-pointer flex-col justify-center rounded-lg px-3 py-1.5 text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                  onClick={() => onPickTool(tool)}
+                >
+                  <span className="flex items-center gap-2 text-sm">
+                    <span className="truncate">{tool.name}</span>
+                    {!tool.enabled && (
+                      <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-fg-subtle">
+                        Off
+                      </span>
+                    )}
+                  </span>
+                  {tool.description && (
+                    <span className="truncate text-xs text-fg-subtle">{tool.description}</span>
+                  )}
+                </Menu.Item>
+              ))}
+            </div>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.SubmenuRoot>
+  );
+}
+
 function PlusMenu({
   onAddFiles,
+  onPickTool,
   disabled = false,
 }: {
   onAddFiles: (files: File[]) => void;
+  onPickTool: (tool: ToolInfo) => void;
   disabled?: boolean;
 }) {
-  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const itemClass =
-    "flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm text-fg-muted outline-none data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50";
   return (
     <>
       <Menu.Root>
@@ -451,20 +533,17 @@ function PlusMenu({
         <Menu.Portal>
           <Menu.Positioner side="top" align="start" sideOffset={6} className="z-50">
             <Menu.Popup className="min-w-44 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
-              <Menu.Item className={itemClass} onClick={() => fileInputRef.current?.click()}>
+              <Menu.Item className={menuItemClass} onClick={() => fileInputRef.current?.click()}>
                 <Paperclip className="size-4 shrink-0" aria-hidden />
                 Add file
               </Menu.Item>
-              <Menu.Item className={itemClass} onClick={() => navigate("/apps/tools")}>
-                <Wrench className="size-4 shrink-0" aria-hidden />
-                Tools
-              </Menu.Item>
-              <Menu.Item className={itemClass} disabled>
+              <ToolsSubmenu onPickTool={onPickTool} />
+              <Menu.Item className={menuItemClass} disabled>
                 <Puzzle className="size-4 shrink-0" aria-hidden />
                 Plugins
                 <span className="ml-auto text-[10px] uppercase tracking-wide text-fg-subtle">Soon</span>
               </Menu.Item>
-              <Menu.Item className={itemClass} disabled>
+              <Menu.Item className={menuItemClass} disabled>
                 <Target className="size-4 shrink-0" aria-hidden />
                 Add Goal
                 <span className="ml-auto text-[10px] uppercase tracking-wide text-fg-subtle">Soon</span>
@@ -491,26 +570,43 @@ function PlusMenu({
   );
 }
 
-function AttachmentChips({
+function ComposerChips({
   files,
-  onRemove,
+  tools,
+  onRemoveFile,
+  onRemoveTool,
 }: {
   files: File[];
-  onRemove: (index: number) => void;
+  tools: ToolInfo[];
+  onRemoveFile: (index: number) => void;
+  onRemoveTool: (id: string) => void;
 }) {
-  if (files.length === 0) return null;
+  if (files.length === 0 && tools.length === 0) return null;
+  const chipClass =
+    "flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-xs text-fg";
   return (
-    <ul aria-label="Attached files" className="flex flex-wrap gap-1.5 px-1 pt-1">
+    <ul aria-label="Attachments" className="flex flex-wrap gap-1.5 px-1 pt-1">
+      {tools.map((tool) => (
+        <li key={`tool-${tool.id}`} className={chipClass}>
+          <Wrench className="size-3 shrink-0 text-fg-subtle" aria-hidden />
+          <span className="max-w-40 truncate">{tool.name}</span>
+          <button
+            type="button"
+            onClick={() => onRemoveTool(tool.id)}
+            aria-label={`Remove ${tool.name}`}
+            className="shrink-0 text-fg-subtle hover:text-danger"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </li>
+      ))}
       {files.map((file, index) => (
-        <li
-          key={`${file.name}-${index}`}
-          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-xs text-fg"
-        >
+        <li key={`${file.name}-${index}`} className={chipClass}>
           <Paperclip className="size-3 shrink-0 text-fg-subtle" aria-hidden />
           <span className="max-w-40 truncate">{file.name}</span>
           <button
             type="button"
-            onClick={() => onRemove(index)}
+            onClick={() => onRemoveFile(index)}
             aria-label={`Remove ${file.name}`}
             className="shrink-0 text-fg-subtle hover:text-danger"
           >
@@ -529,6 +625,7 @@ function NewConversation() {
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [pickedTools, setPickedTools] = useState<ToolInfo[]>([]);
   const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
 
   useEffect(() => {
@@ -587,13 +684,20 @@ function NewConversation() {
           aria-label="Message"
           className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle"
         />
-        <AttachmentChips
+        <ComposerChips
           files={files}
-          onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
+          tools={pickedTools}
+          onRemoveFile={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
+          onRemoveTool={(id) => setPickedTools((current) => current.filter((t) => t.id !== id))}
         />
         <div className="flex items-center gap-1">
           <PlusMenu
             onAddFiles={(added) => setFiles((current) => [...current, ...added])}
+            onPickTool={(tool) =>
+              setPickedTools((current) =>
+                current.some((t) => t.id === tool.id) ? current : [...current, tool],
+              )
+            }
             disabled={create.isPending}
           />
           <div className="flex-1" />
@@ -655,6 +759,7 @@ export default function ChatPage() {
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [pickedTools, setPickedTools] = useState<ToolInfo[]>([]);
   const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
   // Live agent-run state is per conversation in the global store, so
   // navigating away mid-run never leaks one conversation's run into another.
@@ -955,13 +1060,20 @@ export default function ChatPage() {
           onSubmit={submit}
           className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
         >
-          <AttachmentChips
+          <ComposerChips
             files={files}
-            onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
+            tools={pickedTools}
+            onRemoveFile={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
+            onRemoveTool={(id) => setPickedTools((current) => current.filter((t) => t.id !== id))}
           />
           <div className="flex items-end gap-1">
             <PlusMenu
               onAddFiles={(added) => setFiles((current) => [...current, ...added])}
+              onPickTool={(tool) =>
+                setPickedTools((current) =>
+                  current.some((t) => t.id === tool.id) ? current : [...current, tool],
+                )
+              }
               disabled={Boolean(activeRun)}
             />
             <textarea
