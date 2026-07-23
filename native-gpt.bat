@@ -41,10 +41,13 @@ if not exist "apps\agent-runtime\.venv" (
     echo Installing the Python agent runtime...
     uv sync --directory apps/agent-runtime || goto fail
 )
-if not exist "apps\ui\dist\index.html" (
-    echo Building the UI...
-    call pnpm --filter @agentgpt/ui build || goto fail
-)
+
+rem ---- build the UI every launch ------------------------------
+rem The Tauri host serves apps/ui/dist statically, so source changes
+rem don't appear until the bundle is rebuilt. Rebuild on every run to
+rem avoid serving a stale UI.
+echo Building the UI...
+call pnpm --filter @agentgpt/ui build || goto fail
 
 rem ---- launch --------------------------------------------------
 echo.
