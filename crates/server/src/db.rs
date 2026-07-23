@@ -41,6 +41,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0007_generated_assets.sql"),
     ),
     ("0008_voices", include_str!("../migrations/0008_voices.sql")),
+    // 0009/0010 live on the browser branch; 0011 avoids a filename
+    // collision when both branches merge. Names are tracked in
+    // schema_migrations, so the numbering gap is harmless.
+    (
+        "0011_agent_intelligence",
+        include_str!("../migrations/0011_agent_intelligence.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]

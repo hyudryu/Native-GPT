@@ -51,7 +51,14 @@ def load_tool_manifests(tool_ids: list[str], root: Path | None = None) -> dict[s
 
 
 def load_tools(tool_ids: list[str], root: Path | None = None) -> list[Any]:
-    """Import only validated tool IDs selected by the trusted Rust host."""
+    """Import only validated tool IDs selected by the trusted Rust host.
+
+    A tool folder's `TOOL` export may be a single Strands tool or a
+    list/tuple of tools (multi-tool folders like `todo-list`); lists are
+    flattened into the returned list. Every loaded tool object is tagged
+    with its source folder id in `agentgpt_tool_id` so approval gating can
+    still map flattened tools back to their manifest.
+    """
 
     root = (root or repo_root()).resolve()
     tools_root = (root / "tools").resolve()
@@ -70,5 +77,13 @@ def load_tools(tool_ids: list[str], root: Path | None = None) -> list[Any]:
         tool = getattr(module, "TOOL", None)
         if tool is None:
             raise ValueError(f"tool {tool_id} must export TOOL")
-        loaded.append(tool)
+        tools = list(tool) if isinstance(tool, (list, tuple)) else [tool]
+        if not tools:
+            raise ValueError(f"tool {tool_id} exports an empty TOOL list")
+        for item in tools:
+            try:
+                item.agentgpt_tool_id = tool_id
+            except (AttributeError, TypeError):
+                pass  # exotic tool objects without attribute support
+            loaded.append(item)
     return loaded

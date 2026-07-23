@@ -10,14 +10,18 @@ tools/
     test_tool.py        # optional pytest, run via `uv run pytest` from apps/agent-runtime
     ...tool-owned downloads and data...
   _lib/                 # shared helpers — NOT a tool (no manifest/tool.py)
-    paths.py
+    paths.py            # path safety / allowed roots
+    db.py               # shared SQLite access (host DB conventions)
+    context.py          # current run_id / conversation_id
+    testdb.py           # test helper: build a scratch DB from the real migrations
     test_paths.py
 ```
 
 `manifest.json` describes the tool in the Native GPT Tools screen. `tool.py`
-exports a `TOOL` value accepted by the Strands `Agent(tools=[...])` API. Keeping
-tool-owned assets in the same folder prevents runtime downloads from cluttering
-the repository.
+exports a `TOOL` value accepted by the Strands `Agent(tools=[...])` API —
+either a single tool or a list of tools for multi-tool folders (e.g.
+`todo-list`). Keeping tool-owned assets in the same folder prevents runtime
+downloads from cluttering the repository.
 
 ## Discovery
 
@@ -58,6 +62,21 @@ paths outside the allowed roots. The default root is the repo
 separator-delimited) to allow reading from e.g. an indexed documents folder.
 Traversal (`../../etc/passwd`) and absolute paths outside the roots are
 rejected before any disk access. See `_lib/paths.py`.
+
+## Database-backed tools
+
+Tools like `todo-list` (planner / micro-goals) and `goal-supervisor` (goal
+contracts + deterministic validation) persist to the app's SQLite database
+via `_lib/db.py`, which mirrors the host's path resolution
+(`AGENTGPT_DATA_DIR`, else `<repo>/app-data/database/agentgpt.sqlite3`) and
+pragmas (WAL, busy timeout, foreign keys). Their tables come from migration
+`0011_agent_intelligence`. Tools stay stdlib-only (sqlite3, json, uuid,
+datetime) — no pip dependencies.
+
+Scoped tools learn the active run/conversation from `_lib/context.py`: the
+runtime's `run_context` context vars when called inside a run, the
+`AGENTGPT_RUN_ID` / `AGENTGPT_CONVERSATION_ID` env vars otherwise. With no
+context (e.g. unit tests), tools work unscoped or take explicit ids.
 
 ## Running tests
 
