@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router";
+import { Select } from "@base-ui-components/react/select";
 import {
   Check,
   ChevronDown,
@@ -27,24 +27,16 @@ import {
   useUpdateConversation,
   type EnabledModel,
   type PersistedToolEvent,
-  type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import {
+  EMPTY_LIVE_RUN,
+  useRunStore,
+  type Activity,
+  type ApprovalPrompt,
+  type ToolCallEntry,
+} from "../lib/runStore";
 import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
-
-type Activity = { message: string; source?: string };
-
-type ToolCallStatus = "pending" | "ok" | "error";
-
-type ToolCallEntry = {
-  callId: string;
-  tool: string;
-  input?: unknown;
-  status: ToolCallStatus;
-  summary?: string;
-  data?: unknown;
-  error?: { code: string; message: string } | null;
-};
 
 /**
  * If a tool result includes generated asset data (from comfyui_generate or
@@ -81,14 +73,6 @@ function AssetPreview({ data }: { data: unknown }) {
   }
   return null;
 }
-
-/** A pending human-in-the-loop approval prompt for a gated tool call. */
-type ApprovalPrompt = {
-  approvalId: string;
-  tool: string;
-  input?: unknown;
-  prompt: string;
-};
 
 /**
  * Convert a persisted tool-events trace into the same shape the live
@@ -284,31 +268,60 @@ function ModelPicker({
     return result;
   }, [models]);
 
+  const labels = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const model of models) result.set(modelOptionValue(model), model.model_id);
+    return result;
+  }, [models]);
+
   return (
-    <label className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+    <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
       <span className="shrink-0">Model</span>
-      <select
-        aria-label="Conversation model"
+      <Select.Root
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onValueChange={(next) => next !== null && onChange(next)}
         disabled={disabled || models.length === 0}
-        className="min-h-11 min-w-0 max-w-64 rounded-xl border border-border bg-surface-1 px-3 font-mono text-xs text-fg disabled:opacity-60"
       >
-        {models.length === 0 ? (
-          <option value="">No enabled models</option>
-        ) : (
-          [...groups.entries()].map(([provider, entries]) => (
-            <optgroup key={provider} label={provider}>
-              {entries.map((model) => (
-                <option key={modelOptionValue(model)} value={modelOptionValue(model)}>
-                  {model.model_id}
-                </option>
+        <Select.Trigger
+          aria-label="Conversation model"
+          className="flex min-h-11 min-w-0 max-w-64 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3 font-mono text-xs text-fg transition-colors duration-150 hover:bg-surface-2 disabled:opacity-60"
+        >
+          <Select.Value className="min-w-0 flex-1 truncate text-left">
+            {(current: string) =>
+              models.length === 0 ? "No enabled models" : (labels.get(current) ?? "Select model")
+            }
+          </Select.Value>
+          <Select.Icon className="shrink-0 text-fg-subtle">
+            <ChevronDown className="size-4" aria-hidden />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Positioner side="top" align="start" sideOffset={6} alignItemWithTrigger={false} className="z-50">
+            <Select.Popup className="max-h-72 min-w-56 overflow-y-auto rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              {[...groups.entries()].map(([provider, entries]) => (
+                <Select.Group key={provider}>
+                  <Select.GroupLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+                    {provider}
+                  </Select.GroupLabel>
+                  {entries.map((model) => (
+                    <Select.Item
+                      key={modelOptionValue(model)}
+                      value={modelOptionValue(model)}
+                      className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 font-mono text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                    >
+                      <Select.ItemIndicator className="inline-flex w-4 shrink-0 items-center text-accent">
+                        <Check className="size-3.5" aria-hidden />
+                      </Select.ItemIndicator>
+                      <Select.ItemText className="truncate">{model.model_id}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Group>
               ))}
-            </optgroup>
-          ))
-        )}
-      </select>
-    </label>
+            </Select.Popup>
+          </Select.Positioner>
+        </Select.Portal>
+      </Select.Root>
+    </div>
   );
 }
 
@@ -373,7 +386,7 @@ function NewConversation() {
           autoFocus
           placeholder="Ask Native GPT"
           aria-label="Message"
-          className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg placeholder:text-fg-subtle"
+          className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle"
         />
         <div className="flex items-center gap-1">
           <button
@@ -427,7 +440,6 @@ function NewConversation() {
 
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-  const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
   const conversation = useConversation(conversationId);
@@ -439,12 +451,15 @@ export default function ChatPage() {
   const cancel = useCancelRun();
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
-  const [activeRun, setActiveRun] = useState<RunRef | null>(null);
-  const [streamText, setStreamText] = useState("");
-  const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
-  const [approval, setApproval] = useState<ApprovalPrompt | null>(null);
+  // Live agent-run state is per conversation in the global store, so
+  // navigating away mid-run never leaks one conversation's run into another.
+  const live = useRunStore((s) =>
+    conversationId ? (s.byConversation[conversationId] ?? EMPTY_LIVE_RUN) : EMPTY_LIVE_RUN,
+  );
+  const startRun = useRunStore((s) => s.startRun);
+  const stopRun = useRunStore((s) => s.stopRun);
+  const clearApproval = useRunStore((s) => s.clearApproval);
+  const { activeRun, streamText, activity, streamError, toolCalls, approval } = live;
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -465,18 +480,16 @@ export default function ChatPage() {
     if (!model) return;
     autoSentRef.current = true;
     if (state.modelValue) setSelectedModel(state.modelValue);
-    setStreamText("");
-    setStreamError(null);
     send.mutate(
       {
         content: state.firstMessage,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
       },
-      { onSuccess: ({ run }) => setActiveRun(run) },
+      { onSuccess: ({ run }) => startRun(conversationId, run) },
     );
     navigate(location.pathname, { replace: true, state: null });
-  }, [location, conversationId, messages.isPending, messages.data, navigate, send]);
+  }, [location, conversationId, messages.isPending, messages.data, navigate, send, startRun]);
 
   useEffect(() => {
     const available = enabledModels.data ?? [];
@@ -500,119 +513,9 @@ export default function ChatPage() {
     });
   }, [conversation.data, enabledModels.data, projects.data]);
 
-  useEffect(() => {
-    if (!activeRun || !conversationId) return;
-    // Fresh run — clear the previous run's tool trace.
-    setToolCalls([]);
-    const matches = (requestId: string, payload: Record<string, unknown>) =>
-      requestId === activeRun.request_id || payload.run_id === activeRun.id;
-    const offDelta = socket.on("run.text_delta", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.text !== "string") return;
-      setStreamText((current) => current + payload.text);
-    });
-    const offActivity = socket.on("run.activity", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.message !== "string") return;
-      setActivity({
-        message: payload.message,
-        ...(typeof payload.source === "string" ? { source: payload.source } : {}),
-      });
-    });
-    const offToolCall = socket.on("run.tool_call", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const tool = typeof payload.tool === "string" ? payload.tool : "tool";
-      const input = payload.input;
-      setToolCalls((current) => {
-        if (current.some((entry) => entry.callId === callId)) return current;
-        return [
-          ...current,
-          { callId, tool, input, status: "pending" as ToolCallStatus },
-        ];
-      });
-    });
-    const offToolResult = socket.on("run.tool_result", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const ok = payload.ok === true;
-      const summary = typeof payload.summary === "string" ? payload.summary : undefined;
-      const data = payload.data;
-      const error = (payload.error ?? null) as { code: string; message: string } | null;
-      setToolCalls((current) =>
-        current.map((entry) =>
-          entry.callId === callId
-            ? {
-                ...entry,
-                status: ok ? "ok" : ("error" as ToolCallStatus),
-                summary,
-                data,
-                error,
-              }
-            : entry,
-        ),
-      );
-    });
-    const offApprovalNeeded = socket.on("run.approval_needed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      const next: ApprovalPrompt = {
-        approvalId: payload.approval_id,
-        tool: typeof payload.tool === "string" ? payload.tool : "tool",
-        input: payload.input,
-        prompt:
-          typeof payload.prompt === "string" ? payload.prompt : "Approve this tool call?",
-      };
-      setApproval((current) => {
-        // Strands runs tools sequentially, so a second prompt means the first
-        // was orphaned (e.g. its resolution event was missed) — replace it.
-        if (current) {
-          console.warn(`replacing unresolved approval ${current.approvalId}`);
-        }
-        return next;
-      });
-    });
-    const offApprovalResolved = socket.on("run.approval_resolved", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      setApproval((current) =>
-        current && current.approvalId === payload.approval_id ? null : current,
-      );
-    });
-    const offCompleted = socket.on("run.completed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      setActiveRun(null);
-      setApproval(null);
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    const offFailed = socket.on("run.failed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      const error = payload.error as { message?: string } | undefined;
-      setStreamError(error?.message ?? "The response failed.");
-      setActiveRun(null);
-      setApproval(null);
-      // The host persists any partial assistant text on failure/cancel — refetch.
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    return () => {
-      offDelta();
-      offActivity();
-      offToolCall();
-      offToolResult();
-      offApprovalNeeded();
-      offApprovalResolved();
-      offCompleted();
-      offFailed();
-    };
-  }, [activeRun, conversationId, queryClient]);
+  // run.* WS events are handled by the global router in lib/runStore.ts,
+  // which dispatches each event to the slice of the conversation that owns
+  // the run — no per-page subscription needed here.
 
   // ── Auto-scroll to bottom ──────────────────────────────────────────────────
 
@@ -709,7 +612,7 @@ export default function ChatPage() {
       timestamp: new Date().toISOString(),
       payload: { approval_id: approval.approvalId, approved },
     });
-    setApproval(null);
+    clearApproval(conversationId);
   };
 
   const submit = (event: React.FormEvent) => {
@@ -718,9 +621,6 @@ export default function ChatPage() {
     const model = parseModelOptionValue(selectedModel);
     if (!content || activeRun || send.isPending || !model) return;
     setDraft("");
-    setStreamText("");
-    setActivity({ message: "Thinking through the request" });
-    setStreamError(null);
     // Always send the picker selection with the message so the model the user
     // sees is the model that runs — even if the conversation row still holds a
     // stale or since-disabled model (the PATCH in chooseModel may not have
@@ -732,7 +632,9 @@ export default function ChatPage() {
         model_id: model.model_id,
       },
       {
-        onSuccess: ({ run }) => setActiveRun(run),
+        // Register the run against the conversation it was SENT to — the user
+        // may have navigated elsewhere before this response arrives.
+        onSuccess: ({ run }) => startRun(conversationId, run),
         onError: () => setDraft(content),
       },
     );
@@ -791,10 +693,10 @@ export default function ChatPage() {
                 {historicalToolCalls.length > 0 && <ToolCalls entries={historicalToolCalls} />}
                 <article
                   aria-label={`${message.role} message`}
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  className={`max-w-[85%] whitespace-pre-wrap rounded-sm px-4 py-3 text-sm leading-relaxed ${
                     user
-                      ? "ml-auto rounded-br-md bg-accent text-accent-contrast"
-                      : "mr-auto rounded-bl-md border border-border bg-surface-1 text-fg"
+                      ? "ml-auto rounded-br-none bg-accent text-accent-contrast"
+                      : "mr-auto rounded-bl-none border border-border bg-surface-1 text-fg"
                   }`}
                 >
                   {user
@@ -811,7 +713,7 @@ export default function ChatPage() {
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
-              className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-md border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
+              className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-sm rounded-bl-none border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
             >
               {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
             </article>
@@ -851,21 +753,14 @@ export default function ChatPage() {
             disabled={Boolean(activeRun)}
             placeholder="Message Native GPT"
             aria-label="Message"
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg placeholder:text-fg-subtle disabled:opacity-60"
+            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle disabled:opacity-60"
           />
           {activeRun ? (
             <button
               type="button"
               onClick={() =>
                 cancel.mutate(activeRun.id, {
-                  onSuccess: () => {
-                    setActiveRun(null);
-                    setStreamError("Response stopped.");
-                    // Partial assistant text is persisted on cancel — refetch.
-                    void queryClient
-                      .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-                      .then(() => setStreamText(""));
-                  },
+                  onSuccess: () => stopRun(conversationId),
                 })
               }
               disabled={cancel.isPending}

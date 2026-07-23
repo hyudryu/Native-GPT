@@ -1,36 +1,42 @@
-import { ChevronDown, Grid2X2 } from "lucide-react";
 import { NavLink } from "react-router";
 import { appsRegistry } from "./appsRegistry";
 
+const row =
+  "flex min-h-11 min-w-0 items-center gap-2 rounded-xl px-3 text-left text-sm text-fg-muted transition-colors duration-150 hover:bg-surface-2 hover:text-fg";
+
 export default function AppsMenu({ onNavigate }: { onNavigate?: () => void }) {
-  const select = (element: HTMLElement) => {
-    const details = element.closest("details") as HTMLDetailsElement | null;
-    if (details) details.open = false;
-    onNavigate?.();
-  };
   return (
-    <details className="group relative px-2">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-3 text-sm font-medium text-fg-muted hover:bg-surface-2 hover:text-fg [&::-webkit-details-marker]:hidden">
-        <Grid2X2 className="size-5" aria-hidden />
-        <span>Apps</span>
-        <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" aria-hidden />
-      </summary>
-      <div className="absolute left-3 right-3 top-full z-30 mt-1 overflow-hidden rounded-2xl border border-border bg-surface-3 p-1.5 shadow-lg">
+    <section aria-labelledby="apps-heading">
+      <h2
+        id="apps-heading"
+        className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-subtle"
+      >
+        Apps
+      </h2>
+      <ul className="space-y-0.5">
         {appsRegistry.map((app) => {
           const Icon = app.icon;
-          const content = (
-            <>
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white"><Icon className="size-4" aria-hidden /></span>
-              <span className="min-w-0"><span className="block text-sm font-medium text-fg">{app.name}</span><span className="block truncate text-xs text-fg-subtle">{app.description}</span></span>
-            </>
-          );
-          return app.external ? (
-            <a key={app.id} href={app.href} target="_blank" rel="noreferrer" onClick={(event) => select(event.currentTarget)} className="flex min-h-12 items-center gap-2 rounded-xl px-2 hover:bg-surface-2">{content}</a>
-          ) : (
-            <NavLink key={app.id} to={app.href} onClick={(event) => select(event.currentTarget)} className={({ isActive }) => `flex min-h-12 items-center gap-2 rounded-xl px-2 hover:bg-surface-2 ${isActive ? "bg-surface-2" : ""}`}>{content}</NavLink>
+          return (
+            <li key={app.id}>
+              {app.external ? (
+                <a href={app.href} target="_blank" rel="noreferrer" onClick={onNavigate} className={row}>
+                  <Icon className="size-4 shrink-0" aria-hidden />
+                  <span className="truncate">{app.name}</span>
+                </a>
+              ) : (
+                <NavLink
+                  to={app.href}
+                  onClick={onNavigate}
+                  className={({ isActive }) => `${row} ${isActive ? "bg-surface-2 text-fg" : ""}`}
+                >
+                  <Icon className="size-4 shrink-0" aria-hidden />
+                  <span className="truncate">{app.name}</span>
+                </NavLink>
+              )}
+            </li>
           );
         })}
-      </div>
-    </details>
+      </ul>
+    </section>
   );
 }

@@ -550,7 +550,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <label className="mt-4 block text-sm font-medium text-fg-muted" htmlFor="workspace-instructions">Instructions</label>
               <textarea id="workspace-instructions" rows={3} value={workspaceInstructions} onChange={(event) => setWorkspaceInstructions(event.target.value)} placeholder="Shared instructions for conversations in this workspace" className="mt-1 w-full resize-y rounded-xl border border-border bg-surface-1 px-3 py-2 text-sm text-fg" />
               <label className="mt-4 block text-sm font-medium text-fg-muted" htmlFor="workspace-model">Default model</label>
-              <select id="workspace-model" value={workspaceModel} onChange={(event) => setWorkspaceModel(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-border bg-surface-1 px-3 text-sm text-fg">
+              <select id="workspace-model" value={workspaceModel} onChange={(event) => setWorkspaceModel(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-border bg-surface-1 px-3 text-sm text-fg no-focus-ring">
                 <option value="">No default</option>
                 {enabledModels.data?.map((model) => <option key={modelOptionValue(model)} value={modelOptionValue(model)}>{model.provider_name} — {model.model_id}</option>)}
               </select>
@@ -663,13 +663,6 @@ export default function AppShell() {
             <ThemeToggle />
           </header>
           <main className="min-h-0 flex-1 overflow-hidden"><Outlet /></main>
-          <nav aria-label="Primary" className="flex items-stretch border-t border-border bg-surface-1 px-2 lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <NavLink to="/" className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><SquarePen className="size-5" aria-hidden />New</NavLink>
-            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><MessageSquare className="size-5" aria-hidden />Chats</button>
-            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Folder className="size-5" aria-hidden />Workspaces</button>
-            <button type="button" onClick={() => setSheetOpen(true)} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-fg-subtle"><Grid2X2 className="size-5" aria-hidden />Apps</button>
-            <NavLink to="/settings" className={({ isActive }) => `flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] ${isActive ? "text-accent" : "text-fg-subtle"}`}><Settings className="size-5" aria-hidden />Settings</NavLink>
-          </nav>
         </div>
 
         <Dialog.Root open={sheetOpen} onOpenChange={setSheetOpen}>
