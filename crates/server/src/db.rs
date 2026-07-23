@@ -41,6 +41,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0007_generated_assets.sql"),
     ),
     ("0008_voices", include_str!("../migrations/0008_voices.sql")),
+    (
+        "0009_browser",
+        include_str!("../migrations/0009_browser.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -284,6 +288,83 @@ pub struct AnalyticsRunRow {
     pub usage_json: Option<String>,
 }
 
+/// Row of the `browser_profiles` table (spec §13). `profile_path` may be
+/// empty for the seeded default profile; it is resolved lazily at runtime.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BrowserProfileRow {
+    pub id: String,
+    pub name: String,
+    pub engine: String,
+    pub executable_path: Option<String>,
+    pub profile_path: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// Row of the `browser_preferences` table; serialized directly as the REST
+/// shape (camelCase applied by the browser handlers, not here).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BrowserPreferencesRow {
+    pub profile_id: String,
+    pub panel_mode: String,
+    pub panel_width: i64,
+    pub previous_panel_width: Option<i64>,
+    pub auto_open_on_tool_call: bool,
+    pub keep_running_when_hidden: bool,
+    pub remote_streaming_enabled: bool,
+    pub model_mode: String,
+    pub model_endpoint_id: Option<String>,
+    pub model_id: Option<String>,
+}
+
+/// Row of the `browser_tasks` audit table.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BrowserTaskRow {
+    pub id: String,
+    pub profile_id: String,
+    pub conversation_id: Option<String>,
+    pub run_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub task_text: String,
+    pub initial_url: Option<String>,
+    pub final_url: Option<String>,
+    pub status: String,
+    pub result_text: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+/// Row of the `browser_permissions` table.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BrowserPermissionRow {
+    pub id: String,
+    pub profile_id: String,
+    pub origin: Option<String>,
+    pub capability: String,
+    pub scope: String,
+    pub conversation_id: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+/// Row of the `browser_downloads` table.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BrowserDownloadRow {
+    pub id: String,
+    pub profile_id: String,
+    pub task_id: Option<String>,
+    pub source_url: Option<String>,
+    pub filename: String,
+    pub local_path: String,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub status: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ProviderModelRow {
     pub provider_id: String,
@@ -467,6 +548,97 @@ const GENERATED_ASSET_COLUMNS: &str =
 
 const VOICE_COLUMNS: &str =
     "id, name, host_id, source_kind, source_ref, duration_ms, created_at, last_used_at";
+
+const BROWSER_PROFILE_COLUMNS: &str =
+    "id, name, engine, executable_path, profile_path, created_at, updated_at, last_used_at";
+const BROWSER_PREFERENCES_COLUMNS: &str =
+    "profile_id, panel_mode, panel_width, previous_panel_width, auto_open_on_tool_call, \
+     keep_running_when_hidden, remote_streaming_enabled, model_mode, model_endpoint_id, model_id";
+const BROWSER_TASK_COLUMNS: &str =
+    "id, profile_id, conversation_id, run_id, tool_call_id, task_text, initial_url, final_url, \
+     status, result_text, error_code, error_message, started_at, finished_at";
+const BROWSER_PERMISSION_COLUMNS: &str =
+    "id, profile_id, origin, capability, scope, conversation_id, expires_at, created_at";
+const BROWSER_DOWNLOAD_COLUMNS: &str =
+    "id, profile_id, task_id, source_url, filename, local_path, mime_type, size_bytes, status, \
+     created_at";
+
+fn browser_profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserProfileRow> {
+    Ok(BrowserProfileRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        engine: row.get("engine")?,
+        executable_path: row.get("executable_path")?,
+        profile_path: row.get("profile_path")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+        last_used_at: row.get("last_used_at")?,
+    })
+}
+
+fn browser_preferences_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<BrowserPreferencesRow> {
+    Ok(BrowserPreferencesRow {
+        profile_id: row.get("profile_id")?,
+        panel_mode: row.get("panel_mode")?,
+        panel_width: row.get("panel_width")?,
+        previous_panel_width: row.get("previous_panel_width")?,
+        auto_open_on_tool_call: row.get("auto_open_on_tool_call")?,
+        keep_running_when_hidden: row.get("keep_running_when_hidden")?,
+        remote_streaming_enabled: row.get("remote_streaming_enabled")?,
+        model_mode: row.get("model_mode")?,
+        model_endpoint_id: row.get("model_endpoint_id")?,
+        model_id: row.get("model_id")?,
+    })
+}
+
+fn browser_task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserTaskRow> {
+    Ok(BrowserTaskRow {
+        id: row.get("id")?,
+        profile_id: row.get("profile_id")?,
+        conversation_id: row.get("conversation_id")?,
+        run_id: row.get("run_id")?,
+        tool_call_id: row.get("tool_call_id")?,
+        task_text: row.get("task_text")?,
+        initial_url: row.get("initial_url")?,
+        final_url: row.get("final_url")?,
+        status: row.get("status")?,
+        result_text: row.get("result_text")?,
+        error_code: row.get("error_code")?,
+        error_message: row.get("error_message")?,
+        started_at: row.get("started_at")?,
+        finished_at: row.get("finished_at")?,
+    })
+}
+
+fn browser_permission_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserPermissionRow> {
+    Ok(BrowserPermissionRow {
+        id: row.get("id")?,
+        profile_id: row.get("profile_id")?,
+        origin: row.get("origin")?,
+        capability: row.get("capability")?,
+        scope: row.get("scope")?,
+        conversation_id: row.get("conversation_id")?,
+        expires_at: row.get("expires_at")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+fn browser_download_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserDownloadRow> {
+    Ok(BrowserDownloadRow {
+        id: row.get("id")?,
+        profile_id: row.get("profile_id")?,
+        task_id: row.get("task_id")?,
+        source_url: row.get("source_url")?,
+        filename: row.get("filename")?,
+        local_path: row.get("local_path")?,
+        mime_type: row.get("mime_type")?,
+        size_bytes: row.get("size_bytes")?,
+        status: row.get("status")?,
+        created_at: row.get("created_at")?,
+    })
+}
 
 fn remote_host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RemoteHostRow> {
     Ok(RemoteHostRow {
@@ -1700,6 +1872,470 @@ impl Db {
                         usage_json: row.get(5)?,
                     })
                 })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    // ---- browser (ADR-0009) ----
+
+    pub async fn list_browser_profiles(&self) -> Result<Vec<BrowserProfileRow>, DbError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_PROFILE_COLUMNS} FROM browser_profiles ORDER BY created_at"
+            ))?;
+            let rows = stmt
+                .query_map([], browser_profile_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn get_browser_profile(
+        &self,
+        id: &str,
+    ) -> Result<Option<BrowserProfileRow>, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_PROFILE_COLUMNS} FROM browser_profiles WHERE id = ?"
+            ))?;
+            let mut rows = stmt.query_map(params![id], browser_profile_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    pub async fn insert_browser_profile(&self, profile: &BrowserProfileRow) -> Result<(), DbError> {
+        let p = profile.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO browser_profiles ({BROWSER_PROFILE_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    p.id,
+                    p.name,
+                    p.engine,
+                    p.executable_path,
+                    p.profile_path,
+                    p.created_at,
+                    p.updated_at,
+                    p.last_used_at,
+                ],
+            )?;
+            // Every profile gets a default preferences row.
+            conn.execute(
+                "INSERT OR IGNORE INTO browser_preferences (profile_id) VALUES (?)",
+                params![p.id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Update mutable profile fields (name, engine, executable_path,
+    /// profile_path) and bump `updated_at`.
+    pub async fn update_browser_profile(
+        &self,
+        profile: &BrowserProfileRow,
+    ) -> Result<bool, DbError> {
+        let p = profile.clone();
+        self.call(move |conn| {
+            let n = conn.execute(
+                "UPDATE browser_profiles SET name = ?, engine = ?, executable_path = ?, \
+                 profile_path = ?, updated_at = ?, last_used_at = ? WHERE id = ?",
+                params![
+                    p.name,
+                    p.engine,
+                    p.executable_path,
+                    p.profile_path,
+                    p.updated_at,
+                    p.last_used_at,
+                    p.id,
+                ],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    pub async fn touch_browser_profile(&self, id: &str, used_at: &str) -> Result<(), DbError> {
+        let (id, used_at) = (id.to_string(), used_at.to_string());
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE browser_profiles SET last_used_at = ? WHERE id = ?",
+                params![used_at, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Delete a profile; preferences cascade (foreign keys on). The `default`
+    /// profile is protected at the handler layer, not here.
+    pub async fn delete_browser_profile(&self, id: &str) -> Result<bool, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let n = conn.execute("DELETE FROM browser_profiles WHERE id = ?", params![id])?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    pub async fn get_browser_preferences(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<BrowserPreferencesRow>, DbError> {
+        let profile_id = profile_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_PREFERENCES_COLUMNS} FROM browser_preferences \
+                 WHERE profile_id = ?"
+            ))?;
+            let mut rows = stmt.query_map(params![profile_id], browser_preferences_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    pub async fn upsert_browser_preferences(
+        &self,
+        prefs: &BrowserPreferencesRow,
+    ) -> Result<(), DbError> {
+        let p = prefs.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO browser_preferences ({BROWSER_PREFERENCES_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT(profile_id) DO UPDATE SET \
+                         panel_mode = excluded.panel_mode, \
+                         panel_width = excluded.panel_width, \
+                         previous_panel_width = excluded.previous_panel_width, \
+                         auto_open_on_tool_call = excluded.auto_open_on_tool_call, \
+                         keep_running_when_hidden = excluded.keep_running_when_hidden, \
+                         remote_streaming_enabled = excluded.remote_streaming_enabled, \
+                         model_mode = excluded.model_mode, \
+                         model_endpoint_id = excluded.model_endpoint_id, \
+                         model_id = excluded.model_id"
+                ),
+                params![
+                    p.profile_id,
+                    p.panel_mode,
+                    p.panel_width,
+                    p.previous_panel_width,
+                    p.auto_open_on_tool_call,
+                    p.keep_running_when_hidden,
+                    p.remote_streaming_enabled,
+                    p.model_mode,
+                    p.model_endpoint_id,
+                    p.model_id,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn insert_browser_task(&self, task: &BrowserTaskRow) -> Result<(), DbError> {
+        let t = task.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO browser_tasks ({BROWSER_TASK_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    t.id,
+                    t.profile_id,
+                    t.conversation_id,
+                    t.run_id,
+                    t.tool_call_id,
+                    t.task_text,
+                    t.initial_url,
+                    t.final_url,
+                    t.status,
+                    t.result_text,
+                    t.error_code,
+                    t.error_message,
+                    t.started_at,
+                    t.finished_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_browser_task(&self, id: &str) -> Result<Option<BrowserTaskRow>, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_TASK_COLUMNS} FROM browser_tasks WHERE id = ?"
+            ))?;
+            let mut rows = stmt.query_map(params![id], browser_task_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    /// The currently active task for a profile, if any. Active statuses are
+    /// the "one active task per profile" set from spec §19.
+    pub async fn active_browser_task(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<BrowserTaskRow>, DbError> {
+        let profile_id = profile_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_TASK_COLUMNS} FROM browser_tasks \
+                 WHERE profile_id = ? AND status IN \
+                 ('awaiting_approval', 'starting', 'running', 'paused_for_user', 'stopping') \
+                 ORDER BY started_at DESC LIMIT 1"
+            ))?;
+            let mut rows = stmt.query_map(params![profile_id], browser_task_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    pub async fn update_browser_task_status(&self, id: &str, status: &str) -> Result<(), DbError> {
+        let (id, status) = (id.to_string(), status.to_string());
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE browser_tasks SET status = ? WHERE id = ?",
+                params![status, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Mark a task finished with its terminal status, result/error and
+    /// finished_at timestamp.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_browser_task(
+        &self,
+        id: &str,
+        status: &str,
+        result_text: Option<&str>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
+        final_url: Option<&str>,
+        finished_at: &str,
+    ) -> Result<(), DbError> {
+        let owned = (
+            id.to_string(),
+            status.to_string(),
+            result_text.map(str::to_string),
+            error_code.map(str::to_string),
+            error_message.map(str::to_string),
+            final_url.map(str::to_string),
+            finished_at.to_string(),
+        );
+        self.call(move |conn| {
+            let (id, status, result_text, error_code, error_message, final_url, finished_at) =
+                owned;
+            conn.execute(
+                "UPDATE browser_tasks SET status = ?, result_text = ?, error_code = ?, \
+                 error_message = ?, final_url = COALESCE(?, final_url), finished_at = ? \
+                 WHERE id = ?",
+                params![
+                    status,
+                    result_text,
+                    error_code,
+                    error_message,
+                    final_url,
+                    finished_at,
+                    id
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_browser_tasks(
+        &self,
+        profile_id: &str,
+        limit: i64,
+    ) -> Result<Vec<BrowserTaskRow>, DbError> {
+        let profile_id = profile_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_TASK_COLUMNS} FROM browser_tasks \
+                 WHERE profile_id = ? ORDER BY started_at DESC LIMIT ?"
+            ))?;
+            let rows = stmt
+                .query_map(params![profile_id, limit], browser_task_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn insert_browser_permission(
+        &self,
+        permission: &BrowserPermissionRow,
+    ) -> Result<(), DbError> {
+        let p = permission.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO browser_permissions ({BROWSER_PERMISSION_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    p.id,
+                    p.profile_id,
+                    p.origin,
+                    p.capability,
+                    p.scope,
+                    p.conversation_id,
+                    p.expires_at,
+                    p.created_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_browser_permissions(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<BrowserPermissionRow>, DbError> {
+        let profile_id = profile_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_PERMISSION_COLUMNS} FROM browser_permissions \
+                 WHERE profile_id = ? ORDER BY created_at"
+            ))?;
+            let rows = stmt
+                .query_map(params![profile_id], browser_permission_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    /// Stored grants matching a capability check. `origin` matches either the
+    /// exact origin or a NULL (any-origin) grant; `conversation_id` matches
+    /// either the exact conversation or a NULL grant.
+    pub async fn find_browser_permissions(
+        &self,
+        profile_id: &str,
+        capability: &str,
+        origin: Option<&str>,
+        conversation_id: Option<&str>,
+    ) -> Result<Vec<BrowserPermissionRow>, DbError> {
+        let owned = (
+            profile_id.to_string(),
+            capability.to_string(),
+            origin.map(str::to_string),
+            conversation_id.map(str::to_string),
+        );
+        self.call(move |conn| {
+            let (profile_id, capability, origin, conversation_id) = owned;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_PERMISSION_COLUMNS} FROM browser_permissions \
+                 WHERE profile_id = ? AND capability = ? \
+                   AND (origin IS NULL OR origin = ?) \
+                   AND (conversation_id IS NULL OR conversation_id = ?) \
+                   AND (expires_at IS NULL OR expires_at > ?) \
+                 ORDER BY created_at"
+            ))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows = stmt
+                .query_map(
+                    params![
+                        profile_id,
+                        capability,
+                        origin.unwrap_or_default(),
+                        conversation_id.unwrap_or_default(),
+                        now
+                    ],
+                    browser_permission_from_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn delete_browser_permission(&self, id: &str) -> Result<bool, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let n = conn.execute("DELETE FROM browser_permissions WHERE id = ?", params![id])?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    pub async fn insert_browser_download(
+        &self,
+        download: &BrowserDownloadRow,
+    ) -> Result<(), DbError> {
+        let d = download.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO browser_downloads ({BROWSER_DOWNLOAD_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    d.id,
+                    d.profile_id,
+                    d.task_id,
+                    d.source_url,
+                    d.filename,
+                    d.local_path,
+                    d.mime_type,
+                    d.size_bytes,
+                    d.status,
+                    d.created_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn update_browser_download(
+        &self,
+        id: &str,
+        status: &str,
+        size_bytes: Option<i64>,
+    ) -> Result<(), DbError> {
+        let (id, status) = (id.to_string(), status.to_string());
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE browser_downloads SET status = ?, size_bytes = COALESCE(?, size_bytes) \
+                 WHERE id = ?",
+                params![status, size_bytes, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_browser_downloads(
+        &self,
+        profile_id: &str,
+        limit: i64,
+    ) -> Result<Vec<BrowserDownloadRow>, DbError> {
+        let profile_id = profile_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {BROWSER_DOWNLOAD_COLUMNS} FROM browser_downloads \
+                 WHERE profile_id = ? ORDER BY created_at DESC LIMIT ?"
+            ))?;
+            let rows = stmt
+                .query_map(params![profile_id, limit], browser_download_from_row)?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
         })

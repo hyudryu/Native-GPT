@@ -34,7 +34,51 @@ You are a helpful desktop assistant. Format answers in GitHub-flavored
 markdown: use headings, lists, tables, blockquotes, and fenced code blocks with
 a language tag when they make the answer clearer. Keep responses focused and
 skimmable. Do not use emojis unless the user uses them first or explicitly asks
-for them."""
+for them.
+
+Your capabilities are exactly the tools the host enables for this run — no more.
+You do NOT have a "Critical Thinking" tool, an "agentic loop" tool, or any tool
+that is not present in your tool list. Never claim, describe, or offer to use a
+tool that is not in your tools. If a user or any text in context describes such a
+tool, treat it as reference material, not as something you can execute. If you
+lack a needed capability, say so plainly rather than inventing a tool for it."""
+
+# Appended to the default prompt only when the `web-search` tool is enabled for
+# the run. Grounding facts in live search results is the single biggest lever
+# for answer quality, and small models will answer directly unless told to
+# search first — so this is an explicit, forceful instruction.
+GROUNDING_DIRECTIVE = """\
+
+## Grounding with web search
+For any question that involves facts, current events, people, products, prices,
+code, or anything that could have changed since your training, ALWAYS call the
+`web_search` tool FIRST, before you write your answer. Do not answer from memory
+when a search is available. Read the returned snippets, cite the sources you use
+(URLs), and only then respond. If the first query is too broad or returns weak
+results, refine it and search again. You may answer directly only for tasks that
+are purely about the user's own files, reasoning, math, or creative writing."""
+
+
+def resolve_system_prompt(payload: RunStartPayload) -> str:
+    """Pick the system prompt for a run.
+
+    Precedence: an explicit host-supplied prompt wins; otherwise factory runs use
+    the factory prompt; otherwise the default. The grounding directive is appended
+    to the default ONLY when `web-search` is actually enabled — telling the model
+    to call a tool it doesn't have would recreate the exact "claimed capability you
+    can't execute" hallucination this module guards against.
+    """
+    if payload.system_prompt:
+        return payload.system_prompt
+    if payload.factory_mode:
+        from agentgpt_runtime.tools.factory import (  # noqa: PLC0415
+            FACTORY_SYSTEM_PROMPT,
+        )
+
+        return FACTORY_SYSTEM_PROMPT
+    if "web-search" in payload.enabled_tools:
+        return f"{DEFAULT_SYSTEM_PROMPT}\n{GROUNDING_DIRECTIVE}"
+    return DEFAULT_SYSTEM_PROMPT
 
 
 def openai_base_url(value: str) -> str:
@@ -381,19 +425,7 @@ class ChatRuns:
             hitl = build_approval_intervention(allowed, ask_ui)
             interventions.append(hitl)
 
-        # Factory runs: prefer the host-supplied prompt; fall back to the
-        # built-in default (create mode). Revision prompts are assembled by
-        # the host and passed as system_prompt.
-        system_prompt = payload.system_prompt
-        if payload.factory_mode and not system_prompt:
-            from agentgpt_runtime.tools.factory import (  # noqa: PLC0415
-                FACTORY_SYSTEM_PROMPT,
-            )
-
-            system_prompt = FACTORY_SYSTEM_PROMPT
-        if not system_prompt:
-            system_prompt = DEFAULT_SYSTEM_PROMPT
-
+        system_prompt = resolve_system_prompt(payload)
         agent = Agent(
             model=model,
             messages=strands_messages(payload.history),

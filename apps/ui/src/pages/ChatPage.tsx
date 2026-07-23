@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   CircleStop,
+  Globe,
   LoaderCircle,
   Paperclip,
   Plus,
@@ -45,6 +46,8 @@ import {
 import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
 import { assetPayload, renderableAssetUrl } from "../lib/assetUrl";
 import { useRemoteHosts } from "../lib/remoteHosts";
+import { startBrowser } from "../features/browser/browserApi";
+import { useBrowserStore } from "../features/browser/browserStore";
 
 /**
  * If a tool result includes generated asset data (from the bridge's
@@ -444,6 +447,16 @@ function PlusMenu({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const itemClass =
     "flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm text-fg-muted outline-none data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50";
+
+  /** Open the browser panel at a 50/50 split; warm up Chromium if installed. */
+  const openBrowserPanel = () => {
+    const s = useBrowserStore.getState();
+    s.setSplitWidth(s.containerWidth > 0 ? s.containerWidth * 0.5 : 640);
+    if (s.installStatus === "ready" && s.processStatus === "stopped") {
+      // Fire-and-forget — the viewport surfaces install/start errors itself.
+      startBrowser().catch(() => {});
+    }
+  };
   return (
     <>
       <Menu.Root>
@@ -460,6 +473,10 @@ function PlusMenu({
               <Menu.Item className={itemClass} onClick={() => fileInputRef.current?.click()}>
                 <Paperclip className="size-4 shrink-0" aria-hidden />
                 Add file
+              </Menu.Item>
+              <Menu.Item className={itemClass} onClick={openBrowserPanel}>
+                <Globe className="size-4 shrink-0" aria-hidden />
+                Browser
               </Menu.Item>
               <Menu.Item className={itemClass} onClick={() => navigate("/apps/tools")}>
                 <Wrench className="size-4 shrink-0" aria-hidden />
@@ -929,14 +946,16 @@ export default function ChatPage() {
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
           {activeRun && approval && <ApprovalBanner approval={approval} onDecide={decideApproval} />}
-          {activeRun && !approval && !streamText && <AgentActivity activity={activity} />}
+          {(send.isPending || activeRun) && !approval && !streamText && (
+            <AgentActivity activity={send.isPending ? { message: "Sending…" } : activity} />
+          )}
           {streamText && (
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
               className="w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
             >
-              {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
+              <MarkdownMessage content={streamText} />
             </article>
           )}
           {(streamError || send.isError) && (
