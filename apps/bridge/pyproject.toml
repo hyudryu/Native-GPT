@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.13,<3",
     "httpx>=0.28,<1",
     "python-multipart>=0.0.20,<1",
+    # MCP tool layer (mounted at /mcp). Same SDK the desktop agent-runtime
+    # uses via strands-agents (1.28.x there) — keep majors aligned.
+    "mcp>=1.28,<2",
     # ComfyUI and OpenVoice are managed as subprocesses; their own deps live in
     # those workspaces. The bridge only needs httpx to talk to ComfyUI's HTTP API.
 ]

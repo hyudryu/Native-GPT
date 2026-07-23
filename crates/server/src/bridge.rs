@@ -1,21 +1,19 @@
 //! HTTP client for remote backend hosts (the "bridge").
 //!
 //! The desktop server acts as an authenticated client of one or more remote
-//! bridge services (ADR-0008). This module wraps the bridge's REST surface:
-//! health probes, workload lifecycle, job submission, and voice management.
-//! Per-host bearer tokens are resolved from the keychain by the caller and
-//! passed in — they are never stored or logged here.
-//
-// The client defines the full bridge API surface (health, jobs, voices); some
-// methods/structs are not yet wired to HTTP routes. Allow dead code until the
-// route layer catches up so `-D warnings` CI stays green.
-#![allow(dead_code)]
+//! bridge services (ADR-0008). Generation/TTS job submission moved to MCP
+//! (the agent-runtime connects to the bridge's `/mcp` endpoint directly; see
+//! `docs/superpowers/specs/2026-07-22-bridge-mcp-server-design.md`). What
+//! remains here is the REST surface the desktop still proxies: health probes
+//! ("test connection"), asset byte fetching (same-origin asset proxy), and
+//! voice management. Per-host bearer tokens are resolved from the keychain by
+//! the caller and passed in — they are never stored or logged here.
 
 use std::time::Duration;
 
 use reqwest::{Client, ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::ApiError;
 
@@ -28,7 +26,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct BridgeClient {
     base_url: String,
     token: Option<String>,
-    tls_verify: bool,
     client: Client,
 }
 
@@ -38,17 +35,6 @@ pub struct BridgeHealth {
     pub version: String,
     #[serde(default)]
     pub workloads: serde_json::Map<String, Value>,
-}
-
-/// Deserialized workload state entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkloadState {
-    #[serde(default)]
-    pub state: String,
-    #[serde(default)]
-    pub healthy: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
 }
 
 /// Result of a `/health` probe: either a healthy snapshot or a failure reason.
@@ -74,14 +60,8 @@ impl BridgeClient {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
-            tls_verify,
             client,
         })
-    }
-
-    /// Whether TLS verification is enabled for this host (for diagnostics).
-    pub fn tls_verify(&self) -> bool {
-        self.tls_verify
     }
 
     fn url(&self, path: &str) -> String {
@@ -104,31 +84,6 @@ impl BridgeClient {
             serde_json::from_slice(&body).map_err(BridgeError::decode)
         } else {
             Err(BridgeError::status(status, &body))
-        }
-    }
-
-    async fn post_json<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &Value,
-        timeout: Duration,
-    ) -> Result<T, BridgeError> {
-        let mut req = self
-            .client
-            .post(self.url(path))
-            .timeout(timeout)
-            .header("Content-Type", "application/json")
-            .json(body);
-        if let Some(token) = &self.token {
-            req = req.bearer_auth(token);
-        }
-        let resp = req.send().await.map_err(BridgeError::transport)?;
-        let status = resp.status();
-        let resp_body = resp.bytes().await.map_err(BridgeError::transport)?;
-        if status.is_success() {
-            serde_json::from_slice(&resp_body).map_err(BridgeError::decode)
-        } else {
-            Err(BridgeError::status(status, &resp_body))
         }
     }
 
@@ -199,28 +154,6 @@ impl BridgeClient {
         Ok((body.to_vec(), detected_mime))
     }
 
-    /// Submit a workload job (e.g. ComfyUI generate, OpenVoice TTS).
-    pub async fn submit_job(
-        &self,
-        workload_id: &str,
-        job_body: &Value,
-        timeout: Duration,
-    ) -> Result<Value, ApiError> {
-        self.post_json::<Value>(&format!("/workloads/{workload_id}/jobs"), job_body, timeout)
-            .await
-            .map_err(|e| e.into_api())
-    }
-
-    /// Poll a job's status.
-    pub async fn job_status(&self, workload_id: &str, job_id: &str) -> Result<Value, ApiError> {
-        self.get_json::<Value>(
-            &format!("/workloads/{workload_id}/jobs/{job_id}"),
-            DEFAULT_TIMEOUT,
-        )
-        .await
-        .map_err(|e| e.into_api())
-    }
-
     /// Upload a voice reference clip (multipart) to the OpenVoice workload.
     pub async fn upload_voice(
         &self,
@@ -260,13 +193,6 @@ impl BridgeClient {
             return Err(BridgeError::status(status, &body).into_api());
         }
         Ok(())
-    }
-
-    /// List voices on the bridge (for sync/diagnostics).
-    pub async fn list_voices(&self) -> Result<Value, ApiError> {
-        self.get_json::<Value>("/workloads/openvoice/voices", DEFAULT_TIMEOUT)
-            .await
-            .map_err(|e| e.into_api())
     }
 }
 
@@ -366,35 +292,4 @@ impl BridgeError {
             BridgeErrorKind::Status => "error",
         }
     }
-}
-
-/// Build a job body for a ComfyUI generation request.
-pub fn comfyui_job_body(
-    prompt: &str,
-    kind: &str,
-    model: Option<&str>,
-    size: Option<&str>,
-) -> Value {
-    json!({
-        "kind": "generate",
-        "prompt": prompt,
-        "output_kind": kind,
-        "model": model,
-        "size": size,
-    })
-}
-
-/// Build a job body for an OpenVoice TTS request.
-pub fn openvoice_job_body(
-    text: &str,
-    voice_id: Option<&str>,
-    accent: Option<&str>,
-    speed: Option<f64>,
-) -> Value {
-    json!({
-        "text": text,
-        "voice_id": voice_id,
-        "accent": accent,
-        "speed": speed,
-    })
 }
