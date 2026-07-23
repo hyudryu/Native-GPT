@@ -88,7 +88,9 @@ async fn factory_system_prompt(
         }
         None => (FACTORY_CREATE_PROMPT, String::new()),
     };
-    Ok(format!("{mode_line}{context}\n\nUSER REQUEST: {user_request}"))
+    Ok(format!(
+        "{mode_line}{context}\n\nUSER REQUEST: {user_request}"
+    ))
 }
 
 pub async fn send_message(

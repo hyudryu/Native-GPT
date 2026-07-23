@@ -280,6 +280,12 @@ pub async fn create_conversation(
         archived_at: None,
         created_at: now.clone(),
         updated_at: now,
+        // `message_count` is a derived value computed at read time by
+        // `list_conversations` (a COUNT over the messages table), not a
+        // persisted column. Leave it None here so the create response and
+        // the persisted row agree — the client refetches the list, which
+        // populates it, rather than trusting a stale hardcoded value.
+        message_count: None,
     };
     state.db.insert_conversation(&conversation).await?;
     crate::events::data_changed(

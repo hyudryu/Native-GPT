@@ -27,8 +27,8 @@ mod phase3;
 mod tools;
 mod updates;
 
-mod remote_hosts;
 mod assets;
+mod remote_hosts;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -354,8 +354,14 @@ pub fn build_router(state: SharedState) -> Router {
             patch(remote_hosts::patch_host).delete(remote_hosts::delete_host),
         )
         .route("/api/remote-hosts/{id}/test", post(remote_hosts::test_host))
-        .route("/api/remote-hosts/generate", post(remote_hosts::generate_comfyui))
-        .route("/api/remote-hosts/tts", post(remote_hosts::generate_openvoice))
+        .route(
+            "/api/remote-hosts/generate",
+            post(remote_hosts::generate_comfyui),
+        )
+        .route(
+            "/api/remote-hosts/tts",
+            post(remote_hosts::generate_openvoice),
+        )
         .route(
             "/api/remote-hosts/{host_id}/voices",
             get(remote_hosts::list_voices).post(remote_hosts::upload_voice),

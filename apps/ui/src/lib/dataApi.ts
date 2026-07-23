@@ -25,6 +25,8 @@ export interface Conversation {
   archived?: boolean;
   created_at?: string;
   updated_at?: string;
+  /** Message count, populated by the list endpoint. Absent on get/create. */
+  message_count?: number;
 }
 
 export interface Message {

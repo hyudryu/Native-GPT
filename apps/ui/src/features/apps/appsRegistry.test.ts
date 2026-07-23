@@ -8,10 +8,9 @@ describe("appsRegistry", () => {
     expect(new Set(appsRegistry.map((app) => app.id)).size).toBe(appsRegistry.length);
   });
 
-  it("uses the canonical repository URL", () => {
-    expect(appsRegistry.find((app) => app.id === "github")).toMatchObject({
-      href: "https://github.com/hyudryu/Native-GPT",
-      external: true,
-    });
+  it("does not carry an external repository link (moved to Updates)", () => {
+    // The GitHub repo link now lives on the Updates page, not the Apps menu.
+    expect(appsRegistry.find((app) => app.id === "github")).toBeUndefined();
+    expect(appsRegistry.every((app) => !app.external)).toBe(true);
   });
 });

@@ -49,9 +49,7 @@ pub fn write_asset_bytes(
             "asset_id contains invalid characters",
         ));
     }
-    let ext = mime_type
-        .and_then(mime_to_ext)
-        .unwrap_or_else(|| "bin");
+    let ext = mime_type.and_then(mime_to_ext).unwrap_or("bin");
     let filename = format!("{asset_id}.{ext}");
     let abs = dir.join(&filename);
     std::fs::write(&abs, bytes)?;
@@ -112,7 +110,10 @@ pub async fn serve_asset(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "private, max-age=31536000, immutable".to_string()),
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable".to_string(),
+            ),
         ],
         bytes,
     )
@@ -159,7 +160,8 @@ mod tests {
 
     #[test]
     fn write_and_read_asset_bytes() {
-        let dir = std::env::temp_dir().join(format!("agentgpt-assets-test-{}", uuid::Uuid::now_v7()));
+        let dir =
+            std::env::temp_dir().join(format!("agentgpt-assets-test-{}", uuid::Uuid::now_v7()));
         let (rel, abs) = write_asset_bytes(&dir, "test-id", b"hello", Some("image/png")).unwrap();
         assert!(rel.starts_with("test-id."));
         assert!(abs.is_file());

@@ -27,7 +27,7 @@ export function useKnowledge(projectId?: string) {
 export function useIngestKnowledge(projectId?: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string }) =>
+    mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string; content_b64?: string }) =>
       request("/api/knowledge", { method: "POST", body: JSON.stringify({ ...input, project_id: projectId ?? null }) }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }),
   });

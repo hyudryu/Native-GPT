@@ -5,6 +5,11 @@
 //! health probes, workload lifecycle, job submission, and voice management.
 //! Per-host bearer tokens are resolved from the keychain by the caller and
 //! passed in — they are never stored or logged here.
+//
+// The client defines the full bridge API surface (health, jobs, voices); some
+// methods/structs are not yet wired to HTTP routes. Allow dead code until the
+// route layer catches up so `-D warnings` CI stays green.
+#![allow(dead_code)]
 
 use std::time::Duration;
 
@@ -154,7 +159,10 @@ impl BridgeClient {
     /// Probe `/health`. Returns a `HealthProbe` rather than erroring on
     /// unreachable hosts, so callers can record status without try/catch.
     pub async fn probe_health(&self) -> HealthProbe {
-        match self.get_json::<BridgeHealth>("/health", DEFAULT_TIMEOUT).await {
+        match self
+            .get_json::<BridgeHealth>("/health", DEFAULT_TIMEOUT)
+            .await
+        {
             Ok(h) => HealthProbe::Reachable(h),
             Err(e) => HealthProbe::Unreachable(e.to_string()),
         }
@@ -198,21 +206,13 @@ impl BridgeClient {
         job_body: &Value,
         timeout: Duration,
     ) -> Result<Value, ApiError> {
-        self.post_json::<Value>(
-            &format!("/workloads/{workload_id}/jobs"),
-            job_body,
-            timeout,
-        )
-        .await
-        .map_err(|e| e.into_api())
+        self.post_json::<Value>(&format!("/workloads/{workload_id}/jobs"), job_body, timeout)
+            .await
+            .map_err(|e| e.into_api())
     }
 
     /// Poll a job's status.
-    pub async fn job_status(
-        &self,
-        workload_id: &str,
-        job_id: &str,
-    ) -> Result<Value, ApiError> {
+    pub async fn job_status(&self, workload_id: &str, job_id: &str) -> Result<Value, ApiError> {
         self.get_json::<Value>(
             &format!("/workloads/{workload_id}/jobs/{job_id}"),
             DEFAULT_TIMEOUT,
@@ -236,13 +236,9 @@ impl BridgeClient {
         let form = reqwest::multipart::Form::new()
             .text("name", name.to_string())
             .part("clip", part);
-        self.post_multipart::<Value>(
-            "/workloads/openvoice/voices",
-            form,
-            Duration::from_secs(60),
-        )
-        .await
-        .map_err(|e| e.into_api())
+        self.post_multipart::<Value>("/workloads/openvoice/voices", form, Duration::from_secs(60))
+            .await
+            .map_err(|e| e.into_api())
     }
 
     /// Delete a voice on the bridge.
@@ -254,7 +250,10 @@ impl BridgeClient {
         if let Some(token) = &self.token {
             req = req.bearer_auth(token);
         }
-        let resp = req.send().await.map_err(|e| BridgeError::transport(e).into_api())?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| BridgeError::transport(e).into_api())?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.bytes().await.unwrap_or_default();
@@ -322,14 +321,10 @@ impl BridgeError {
     /// Map to a REST-facing `ApiError`.
     pub fn into_api(self) -> ApiError {
         match self.kind {
-            BridgeErrorKind::Transport => {
-                ApiError::bad_gateway("bridge_unreachable", self.message)
-            }
+            BridgeErrorKind::Transport => ApiError::bad_gateway("bridge_unreachable", self.message),
             BridgeErrorKind::Decode => ApiError::bad_gateway("bad_bridge_response", self.message),
             BridgeErrorKind::Status => match self.status {
-                Some(s) if s == StatusCode::BAD_REQUEST => {
-                    ApiError::bad_request(self.message)
-                }
+                Some(s) if s == StatusCode::BAD_REQUEST => ApiError::bad_request(self.message),
                 Some(s) if s == StatusCode::NOT_FOUND => ApiError::not_found(self.message),
                 Some(s) if s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN => {
                     ApiError::new(s, "bridge_auth_error", self.message)
@@ -351,7 +346,13 @@ impl BridgeError {
 impl std::fmt::Display for BridgeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.status {
-            Some(s) => write!(f, "bridge {}: {} (status {})", self.kind_msg(), self.message, s),
+            Some(s) => write!(
+                f,
+                "bridge {}: {} (status {})",
+                self.kind_msg(),
+                self.message,
+                s
+            ),
             None => write!(f, "bridge {}: {}", self.kind_msg(), self.message),
         }
     }
@@ -368,7 +369,12 @@ impl BridgeError {
 }
 
 /// Build a job body for a ComfyUI generation request.
-pub fn comfyui_job_body(prompt: &str, kind: &str, model: Option<&str>, size: Option<&str>) -> Value {
+pub fn comfyui_job_body(
+    prompt: &str,
+    kind: &str,
+    model: Option<&str>,
+    size: Option<&str>,
+) -> Value {
     json!({
         "kind": "generate",
         "prompt": prompt,

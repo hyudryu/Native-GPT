@@ -791,10 +791,10 @@ export default function ChatPage() {
                 {historicalToolCalls.length > 0 && <ToolCalls entries={historicalToolCalls} />}
                 <article
                   aria-label={`${message.role} message`}
-                  className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                     user
-                      ? "ml-auto bg-accent text-accent-contrast"
-                      : "mr-auto border border-border bg-surface-1 text-fg"
+                      ? "ml-auto rounded-br-md bg-accent text-accent-contrast"
+                      : "mr-auto rounded-bl-md border border-border bg-surface-1 text-fg"
                   }`}
                 >
                   {user
@@ -811,7 +811,7 @@ export default function ChatPage() {
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
-              className="mr-auto max-w-[88%] whitespace-pre-wrap rounded-2xl border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
+              className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-md border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
             >
               {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
             </article>

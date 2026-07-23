@@ -8,6 +8,7 @@ use std::time::Duration;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -28,6 +29,12 @@ pub struct IngestKnowledge {
     source_uri: Option<String>,
     #[serde(default)]
     content: Option<String>,
+    /// Base64-encoded raw file bytes (e.g. for PDF uploads). When present the
+    /// backend decodes and extracts text itself, so binary formats that can't
+    /// be sent as a UTF-8 `content` string are supported. `source_uri` carries
+    /// the filename used for type detection.
+    #[serde(default)]
+    content_b64: Option<String>,
     /// NULL/absent → global source; present → scoped to that project.
     #[serde(default)]
     project_id: Option<String>,
@@ -206,6 +213,54 @@ fn plain_text_from_html(html: &str) -> String {
         .replace("&quot;", "\"")
 }
 
+/// PDF files begin with these magic bytes.
+const PDF_MAGIC: &[u8] = b"%PDF";
+
+/// True when a filename (by extension) or raw bytes (by magic) look like a PDF.
+fn looks_like_pdf(filename: Option<&str>, bytes: &[u8]) -> bool {
+    if bytes.starts_with(PDF_MAGIC) {
+        return true;
+    }
+    filename
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.ends_with(".pdf")
+        })
+        .unwrap_or(false)
+}
+
+/// Extract plain text from PDF bytes. Returns whitespace-collapsed text so the
+/// downstream chunker sees clean tokens rather than PDF's line-break noise.
+async fn extract_pdf_text(bytes: &[u8]) -> Result<String, ApiError> {
+    // `pdf_extract::extract_text_from_mem` does CPU-bound parsing; run it on a
+    // blocking thread so the async handler doesn't stall the runtime.
+    let owned = bytes.to_vec();
+    let extracted = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&owned))
+        .await
+        .map_err(|error| ApiError::bad_request(format!("PDF extraction failed: {error}")))?
+        .map_err(|error| ApiError::bad_request(format!("PDF is not readable: {error}")))?;
+    Ok(collapse_whitespace(&extracted))
+}
+
+/// Collapse runs of whitespace (including stray PDF line breaks) into single
+/// spaces so chunks aren't dominated by blank lines and page breaks.
+fn collapse_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut prev_was_ws = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !prev_was_ws {
+                result.push(' ');
+            }
+            prev_was_ws = true;
+        } else {
+            result.push(ch);
+            prev_was_ws = false;
+        }
+    }
+    result.trim().to_string()
+}
+
 async fn fetch_url(value: &str) -> Result<(String, String), ApiError> {
     let url = reqwest::Url::parse(value)
         .map_err(|error| ApiError::bad_request(format!("Invalid URL: {error}")))?;
@@ -341,6 +396,36 @@ pub async fn list_sources(
     })))
 }
 
+/// Resolve a `file` upload to plain text. Prefers base64-encoded bytes when
+/// present (needed for PDF and other binary formats); otherwise uses the UTF-8
+/// `content` string (plain text, Markdown, etc.). PDF bytes are run through
+/// text extraction; non-PDF bytes are decoded as UTF-8.
+async fn decode_file_content(body: &IngestKnowledge) -> Result<String, ApiError> {
+    if let Some(encoded) = body.content_b64.as_deref() {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded.trim())
+            .map_err(|error| {
+                ApiError::bad_request(format!("content_b64 is not valid base64: {error}"))
+            })?;
+        if bytes.len() > MAX_SOURCE_BYTES {
+            return Err(ApiError::bad_request(
+                "source content exceeds the 2 MB limit",
+            ));
+        }
+        if looks_like_pdf(body.source_uri.as_deref(), &bytes) {
+            return extract_pdf_text(&bytes).await;
+        }
+        // Unknown binary: try UTF-8, else reject rather than ingesting garbage.
+        return String::from_utf8(bytes).map_err(|error| {
+            ApiError::bad_request(format!(
+                "File bytes are not valid UTF-8 and aren't a PDF: {}",
+                error
+            ))
+        });
+    }
+    Ok(body.content.clone().unwrap_or_default())
+}
+
 pub async fn ingest(
     State(state): State<SharedState>,
     Json(body): Json<IngestKnowledge>,
@@ -367,7 +452,12 @@ pub async fn ingest(
         let (resolved, content) = fetch_url(value).await?;
         (Some(resolved), content)
     } else {
-        (body.source_uri, body.content.unwrap_or_default())
+        // `file` uploads may arrive as base64-encoded bytes (e.g. PDFs, which
+        // can't be sent as a UTF-8 string). Decode and extract text for binary
+        // formats before chunking; plain-text/paste content passes straight
+        // through. `paste` never sends bytes, so this only affects `file`.
+        let content = decode_file_content(&body).await?;
+        (body.source_uri, content)
     };
     let content = content.trim().to_string();
     if content.is_empty() {
@@ -479,6 +569,7 @@ mod tests {
                 source_type: "paste".to_string(),
                 source_uri: None,
                 content: Some("Rust ownership makes memory safety explicit.".to_string()),
+                content_b64: None,
                 project_id: None,
             }),
         )
@@ -514,6 +605,42 @@ mod tests {
             .is_empty());
     }
 
+    #[test]
+    fn pdf_detection_uses_magic_and_extension() {
+        // Magic bytes take precedence.
+        assert!(looks_like_pdf(Some("report.txt"), b"%PDF-1.4..."));
+        // Extension also flags PDFs even without the magic (e.g. empty/odd bytes).
+        assert!(looks_like_pdf(Some("report.PDF"), b""));
+        assert!(!looks_like_pdf(Some("notes.md"), b"# hello"));
+        assert!(!looks_like_pdf(None, b"plain bytes"));
+    }
+
+    #[test]
+    fn collapse_whitespace_flattens_runs() {
+        assert_eq!(collapse_whitespace("a\n\n  b\t c"), "a b c");
+        assert_eq!(collapse_whitespace("  \n\t "), "");
+    }
+
+    #[tokio::test]
+    async fn non_pdf_binary_is_rejected() {
+        let body = IngestKnowledge {
+            title: "Bad upload".to_string(),
+            source_type: "file".to_string(),
+            source_uri: Some("notes.dat".to_string()),
+            content: None,
+            // Raw bytes that are neither UTF-8 nor a PDF.
+            content_b64: Some(base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0xfd])),
+            project_id: None,
+        };
+        let result = decode_file_content(&body).await;
+        assert!(result.is_err());
+        let message = result.unwrap_err().message;
+        assert!(
+            message.contains("not valid UTF-8"),
+            "expected UTF-8 rejection, got: {message}"
+        );
+    }
+
     #[tokio::test]
     async fn project_scoped_sources_are_isolated_from_global() {
         let rig = crate::state::test_state_with_fake_sidecar("token");
@@ -542,6 +669,7 @@ mod tests {
                 source_type: "paste".to_string(),
                 source_uri: None,
                 content: Some("Rust ownership makes memory safety explicit.".to_string()),
+                content_b64: None,
                 project_id: None,
             }),
         )
@@ -554,6 +682,7 @@ mod tests {
                 source_type: "paste".to_string(),
                 source_uri: None,
                 content: Some("Rust ownership makes memory safety explicit.".to_string()),
+                content_b64: None,
                 project_id: Some("proj-rag-1".to_string()),
             }),
         )
