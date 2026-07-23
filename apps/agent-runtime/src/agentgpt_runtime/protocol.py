@@ -12,7 +12,7 @@ import json
 import sys
 import threading
 from datetime import UTC, datetime
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -29,6 +29,7 @@ TYPE_MODELS_LIST = "models.list"
 TYPE_RUN_START = "run.start"
 TYPE_RUN_CANCEL = "run.cancel"
 TYPE_RUN_APPROVE = "run.approve"
+TYPE_RUN_SYNTHESIZE_NOW = "run.synthesize_now"
 
 # Phase 0 response types.
 TYPE_HELLO_OK = "runtime.hello.ok"
@@ -38,10 +39,19 @@ TYPE_MODELS_LIST_OK = "models.list.ok"
 TYPE_RUN_STARTED = "run.started"
 TYPE_RUN_CANCELLED = "run.cancelled"
 TYPE_RUN_APPROVE_OK = "run.approve.ok"
+TYPE_RUN_SYNTHESIZE_NOW_OK = "run.synthesize_now.ok"
 # Streaming event types emitted during a run (no response expected).
 TYPE_RUN_APPROVAL_NEEDED = "run.approval_needed"
 TYPE_RUN_APPROVAL_RESOLVED = "run.approval_resolved"
+TYPE_RUN_ORCHESTRATION = "run.orchestration"
 TYPE_ERROR = "error"
+
+# Thinking modes (run.start.thinking_mode). High is the default.
+THINKING_MODES = ("off", "high", "max")
+ThinkingMode = Literal["off", "high", "max"]
+# Depth presets for thinking_mode=max (run.start.max_depth).
+MAX_DEPTHS = ("quick", "standard", "deep")
+MaxDepth = Literal["quick", "standard", "deep"]
 
 _OUTPUT_LOCK = threading.Lock()
 
@@ -162,6 +172,11 @@ class RunModel(BaseModel):
     base_url: str
     model_id: str
     api_key: str | None = None
+    # Per-endpoint overrides of the thinking-mode request params, forwarded
+    # from the provider record by the host (Settings -> Providers). When set,
+    # they replace the built-in THINKING_OFF/HIGH profile for this endpoint.
+    thinking_off_params: dict[str, Any] | None = None
+    thinking_high_params: dict[str, Any] | None = None
 
 
 class RunStartPayload(BaseModel):
@@ -178,10 +193,20 @@ class RunStartPayload(BaseModel):
     enabled_tools: list[str] = Field(default_factory=list)
     tls_verify: bool = True  # see EndpointTestPayload.tls_verify
     factory_mode: bool = False
+    thinking_mode: ThinkingMode = "high"
+    max_depth: MaxDepth = "standard"
     model: RunModel
 
 
 class RunCancelPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+
+
+class RunSynthesizeNowPayload(BaseModel):
+    """Stop investigating and synthesize partial results (max mode only)."""
+
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
@@ -220,6 +245,35 @@ def make_error(request_id: str, code: str, message: str, retryable: bool = False
         TYPE_ERROR,
         request_id,
         ErrorPayload(code=code, message=message, retryable=retryable),
+    )
+
+
+def make_run_orchestration(
+    request_id: str,
+    run_id: str,
+    conversation_id: str,
+    *,
+    state: str,
+    steps: list[dict[str, Any]],
+    budgets: dict[str, Any],
+) -> Envelope:
+    """Structured max-mode progress event (mirrors messages.json run.orchestration).
+
+    ``steps`` items are {id, label, status, detail?} with status in
+    pending|running|complete|failed|skipped; ``budgets`` is
+    {tokens_used, token_budget, elapsed_s, time_budget_s}. Shapes are built by
+    the orchestration package; the envelope stays loosely typed here.
+    """
+    return make_envelope(
+        TYPE_RUN_ORCHESTRATION,
+        request_id,
+        {
+            "run_id": run_id,
+            "conversation_id": conversation_id,
+            "state": state,
+            "steps": steps,
+            "budgets": budgets,
+        },
     )
 
 

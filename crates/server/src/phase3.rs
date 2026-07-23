@@ -597,6 +597,8 @@ mod tests {
                 default_model_id: Some("enabled-model".to_string()),
                 last_test_status: None,
                 last_tested_at: None,
+                thinking_off_params_json: None,
+                thinking_high_params_json: None,
                 created_at: now.clone(),
                 updated_at: now,
             })
