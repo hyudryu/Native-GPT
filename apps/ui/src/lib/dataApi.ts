@@ -295,7 +295,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
 
 export async function sendMessage(
   conversationId: string,
-  input: { content: string; endpoint_id?: string; model_id?: string },
+  input: { content: string; endpoint_id?: string; model_id?: string; factory_mode?: boolean; factory_revision?: string },
 ): Promise<{ message: Message; run: RunRef }> {
   return request(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages`,

@@ -133,6 +133,9 @@ pub struct RunStart {
     /// See [`EndpointTest::tls_verify`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls_verify: Option<bool>,
+    /// When true the sidecar runs in Tool Manager mode (registers save_tool).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub factory_mode: bool,
     pub model: RunModel,
 }
 
@@ -261,6 +264,7 @@ mod tests {
             system_prompt: None,
             enabled_tools: vec![],
             tls_verify: Some(false),
+            factory_mode: false,
             model: RunModel {
                 base_url: "https://selfsigned.local".into(),
                 model_id: "m-1".into(),
