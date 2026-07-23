@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime
@@ -70,6 +69,7 @@ def _load_lib(filename: str, module_name: str) -> Any:
 _db = _load_lib("db.py", "agentgpt_tools_db")
 _context = _load_lib("context.py", "agentgpt_tools_context")
 _vectorize = _load_lib("vectorize.py", "agentgpt_tools_vectorize")
+_secrets_scan = _load_lib("secrets_scan.py", "agentgpt_tools_secrets_scan")
 
 SCOPES = ("run", "conversation", "project", "profile", "user")
 USER_SCOPE_ID = "user"
@@ -98,21 +98,9 @@ DUPLICATE_CANDIDATE_LIMIT = 50
 SEARCH_CANDIDATE_LIMIT = 200
 SNIPPET_LENGTH = 160
 
-# Secret guard: memory must never store credentials. Detection is regex
-# heuristics over common credential shapes; there is deliberately no override.
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"), "private key block"),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{12,}"), "API key (sk-...)"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS access key id"),
-    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}\b"), "GitHub token"),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
-    (re.compile(r"(?i)\bapi[_-]?key\s*[:=]\s*['\"]?[^\s'\"]{8,}"), "api_key assignment"),
-    (re.compile(r"(?i)\bpassword\s*[:=]\s*['\"]?[^\s'\"]{4,}"), "password assignment"),
-    (
-        re.compile(r"(?i)\b(?:secret|access[_-]?token|auth[_-]?token)\s*[:=]\s*['\"]?[A-Za-z0-9._\-]{10,}"),
-        "secret/token assignment",
-    ),
-)
+# Secret guard: memory must never store credentials. Detection lives in
+# `tools/_lib/secrets_scan.py` (shared with the knowledge tools); there is
+# deliberately no override.
 
 
 class MemoryToolError(ValueError):
@@ -220,12 +208,12 @@ def _parse_timestamp(value: Any, field: str) -> str | None:
 
 def _guard_secrets(content: str) -> None:
     """Reject content that looks like a credential — memory never stores secrets."""
-    for pattern, label in _SECRET_PATTERNS:
-        if pattern.search(content):
-            raise MemoryToolError(
-                "sensitive_content_rejected",
-                f"content looks like a credential ({label}); memories must never store secrets",
-            )
+    label = _secrets_scan.scan_for_secret(content)
+    if label is not None:
+        raise MemoryToolError(
+            "sensitive_content_rejected",
+            f"content looks like a credential ({label}); memories must never store secrets",
+        )
 
 
 def _normalize_for_compare(content: str) -> str:

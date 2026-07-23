@@ -15,6 +15,7 @@ tools/
     context.py          # current run_id / conversation_id
     testdb.py           # test helper: build a scratch DB from the real migrations
     vectorize.py        # deterministic feature-hash embeddings (memory/knowledge)
+    secrets_scan.py     # credential-shaped content detector (memory/knowledge)
     test_paths.py
 ```
 
@@ -67,13 +68,26 @@ rejected before any disk access. See `_lib/paths.py`.
 ## Database-backed tools
 
 Tools like `todo-list` (planner / micro-goals), `goal-supervisor` (goal
-contracts + deterministic validation), and `memory` (scoped assistant memory
-with hybrid FTS + feature-vector recall) persist to the app's SQLite database
+contracts + deterministic validation), `memory` (scoped assistant memory
+with hybrid FTS + feature-vector recall), and `knowledge` (domain knowledge
+RAG over the host's Knowledge Dump tables) persist to the app's SQLite database
 via `_lib/db.py`, which mirrors the host's path resolution
 (`AGENTGPT_DATA_DIR`, else `<repo>/app-data/database/agentgpt.sqlite3`) and
 pragmas (WAL, busy timeout, foreign keys). Their tables come from migration
-`0011_agent_intelligence`. Tools stay stdlib-only (sqlite3, json, uuid,
-datetime, hashlib) — no pip dependencies.
+`0011_agent_intelligence` (plus the pre-existing `knowledge_sources` /
+`knowledge_chunks` from 0003/0005 for the knowledge tool). Tools stay
+stdlib-only (sqlite3, json, uuid, datetime, hashlib) — no pip dependencies.
+
+The memory and knowledge tools share the credential guard in
+`_lib/secrets_scan.py`: content that looks like an API key, password, token,
+or private key is rejected with `sensitive_content_rejected` (no override).
+
+The knowledge tool stores per-source metadata (tags, `content_sha256` for
+dedupe, and `embedding_version` for vector provenance) inside
+`knowledge_sources.tags_json` as a JSON object, because no new migrations may
+add columns. Python-embedded sources are scored with vector cosine;
+host-ingested (Rust-vector) sources rank lexically until `knowledge_reindex`
+rebuilds their embeddings.
 
 The memory tool blends lexical FTS5 matching with cosine similarity over
 deterministic feature-hash vectors from `_lib/vectorize.py` (a Python port of

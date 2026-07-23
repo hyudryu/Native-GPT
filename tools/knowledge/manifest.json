@@ -1,0 +1,10 @@
+{
+  "id": "knowledge",
+  "name": "Knowledge",
+  "description": "Domain knowledge RAG: ingest, search, cite, curate, and scope reusable source material (documents, research findings, reference text) with provenance. Hybrid lexical + feature-vector retrieval over the knowledge_sources/knowledge_chunks tables shared with the host's Knowledge Dump, with global/project/conversation scoping, domain tags, proposals for sensitive promotion, dedupe by content hash, and secret rejection.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}
