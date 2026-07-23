@@ -63,6 +63,22 @@ export default function BrowserPanel() {
     return () => observer.disconnect();
   }, [mode, setContainerWidth]);
 
+  // Release window listeners and clear the store if the panel unmounts mid-drag.
+  // MUST run unconditionally on every render (above the early return) — placing
+  // a hook after `if (mode === "hidden") return null` violates the Rules of
+  // Hooks and crashes the app to a white screen when the panel first opens.
+  useEffect(() => {
+    return () => {
+      const drag = dragState.current;
+      if (drag) {
+        window.removeEventListener("pointermove", drag.onMove);
+        window.removeEventListener("pointerup", drag.onUp);
+        window.removeEventListener("pointercancel", drag.onUp);
+        useBrowserStore.getState().setDragging(false);
+      }
+    };
+  }, []);
+
   if (mode === "hidden") return null;
 
   const width = effectivePanelWidth(mode, panelWidth, containerWidth);
@@ -92,19 +108,6 @@ export default function BrowserPanel() {
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
   };
-
-  // Release window listeners and clear the store if the panel unmounts mid-drag.
-  useEffect(() => {
-    return () => {
-      const drag = dragState.current;
-      if (drag) {
-        window.removeEventListener("pointermove", drag.onMove);
-        window.removeEventListener("pointerup", drag.onUp);
-        window.removeEventListener("pointercancel", drag.onUp);
-        useBrowserStore.getState().setDragging(false);
-      }
-    };
-  }, []);
 
   const content = (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -144,7 +147,7 @@ export default function BrowserPanel() {
   return (
     <aside
       ref={panelRef}
-      aria-label="Native GPT Browser"
+      aria-label={ARIA_LABEL}
       style={mode === "focus" ? undefined : { width }}
       className={`flex h-full min-w-0 flex-row border-l border-border bg-surface-1 ${
         mode === "focus" ? "flex-1" : "shrink-0"
