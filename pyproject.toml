@@ -1,0 +1,8 @@
+# Root-level pytest config for tool tests.
+#
+# The agent-runtime's pytest includes tools/ (testpaths = ["tests", "../../tools"]).
+# When tool tests are collected via explicit paths (../../tools/...), pytest's
+# rootdir resolves here rather than to apps/agent-runtime/. This file ensures
+# the asyncio plugin and mode are picked up regardless of how tests are invoked.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

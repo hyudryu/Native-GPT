@@ -17,6 +17,7 @@ pub mod state;
 pub mod ws;
 
 mod analytics;
+mod bridge;
 mod chat;
 mod defaults;
 mod endpoints;
@@ -25,6 +26,9 @@ mod knowledge;
 mod phase3;
 mod tools;
 mod updates;
+
+mod remote_hosts;
+mod assets;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -188,6 +192,17 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         }
     }
 
+    // Expose the server's port + token to the agent-runtime sidecar so its
+    // tools (comfyui_generate, openvoice_tts, etc.) can call back to this
+    // server's REST API. Child processes inherit these env vars automatically.
+    // SAFETY: single-threaded startup before any other thread reads env.
+    // The token is the same one used for HTTP auth (ADR-0003); loopback calls
+    // are exempt, but tools send it anyway for correctness in non-loopback deployments.
+    unsafe {
+        std::env::set_var("AGENTGPT_SERVER_PORT", port.to_string());
+        std::env::set_var("AGENTGPT_SERVER_TOKEN", &token);
+    }
+
     let supervisor = Supervisor::new(SupervisorConfig::from_env(
         repo_root.clone(),
         config.idle_timeout,
@@ -330,6 +345,27 @@ pub fn build_router(state: SharedState) -> Router {
             "/api/endpoints/{id}/models/{model_id}",
             patch(endpoints::patch_model),
         )
+        .route(
+            "/api/remote-hosts",
+            get(remote_hosts::list_hosts).post(remote_hosts::create_host),
+        )
+        .route(
+            "/api/remote-hosts/{id}",
+            patch(remote_hosts::patch_host).delete(remote_hosts::delete_host),
+        )
+        .route("/api/remote-hosts/{id}/test", post(remote_hosts::test_host))
+        .route("/api/remote-hosts/generate", post(remote_hosts::generate_comfyui))
+        .route("/api/remote-hosts/tts", post(remote_hosts::generate_openvoice))
+        .route(
+            "/api/remote-hosts/{host_id}/voices",
+            get(remote_hosts::list_voices).post(remote_hosts::upload_voice),
+        )
+        .route(
+            "/api/remote-hosts/{host_id}/voices/{voice_id}",
+            delete(remote_hosts::delete_voice),
+        )
+        .route("/api/assets/{id}", get(assets::serve_asset))
+        .route("/api/assets/{id}/meta", get(assets::get_asset_meta))
         .route(
             "/api/projects",
             get(phase3::list_projects).post(phase3::create_project),

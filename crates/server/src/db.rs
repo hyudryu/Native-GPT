@@ -32,6 +32,15 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_project_knowledge",
         include_str!("../migrations/0005_project_knowledge.sql"),
     ),
+    (
+        "0006_remote_hosts",
+        include_str!("../migrations/0006_remote_hosts.sql"),
+    ),
+    (
+        "0007_generated_assets",
+        include_str!("../migrations/0007_generated_assets.sql"),
+    ),
+    ("0008_voices", include_str!("../migrations/0008_voices.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +208,53 @@ pub struct KnowledgeSourceRow {
     /// NULL = global source (available to all chats); non-null = scoped to
     /// that project only. See migration 0005.
     pub project_id: Option<String>,
+}
+
+/// Row of the `remote_hosts` table; serialized directly as the REST shape.
+/// The raw bearer token lives only in the keychain under key `host:<id>`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RemoteHostRow {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub tls_verify: bool,
+    pub has_token: bool,
+    pub status: Option<String>,
+    pub last_checked_at: Option<String>,
+    pub workloads_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Row of the `generated_assets` table; serialized directly as the REST shape.
+/// Bytes live on disk under `app-data/assets/`; this table holds metadata.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GeneratedAssetRow {
+    pub id: String,
+    pub host_id: String,
+    pub workload: String,
+    pub kind: String,
+    pub message_id: Option<String>,
+    pub prompt_text: Option<String>,
+    pub source_ref: Option<String>,
+    pub storage_path: String,
+    pub bytes: Option<i64>,
+    pub mime_type: Option<String>,
+    pub created_at: String,
+}
+
+/// Row of the `voices` table; serialized directly as the REST shape.
+/// The raw clip and extracted embedding live on the bridge host.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct VoiceRow {
+    pub id: String,
+    pub name: String,
+    pub host_id: String,
+    pub source_kind: String,
+    pub source_ref: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -391,6 +447,61 @@ const RUN_COLUMNS: &str = "id, conversation_id, user_message_id, assistant_messa
 const KNOWLEDGE_SOURCE_COLUMNS: &str =
     "id, title, source_type, source_uri, content, chunk_count, created_at, updated_at, project_id";
 
+const REMOTE_HOST_COLUMNS: &str =
+    "id, name, base_url, tls_verify, has_token, status, last_checked_at, workloads_json, \
+     created_at, updated_at";
+
+const GENERATED_ASSET_COLUMNS: &str =
+    "id, host_id, workload, kind, message_id, prompt_text, source_ref, storage_path, bytes, \
+     mime_type, created_at";
+
+const VOICE_COLUMNS: &str =
+    "id, name, host_id, source_kind, source_ref, duration_ms, created_at, last_used_at";
+
+fn remote_host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RemoteHostRow> {
+    Ok(RemoteHostRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        base_url: row.get("base_url")?,
+        tls_verify: row.get("tls_verify")?,
+        has_token: row.get("has_token")?,
+        status: row.get("status")?,
+        last_checked_at: row.get("last_checked_at")?,
+        workloads_json: row.get("workloads_json")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn generated_asset_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GeneratedAssetRow> {
+    Ok(GeneratedAssetRow {
+        id: row.get("id")?,
+        host_id: row.get("host_id")?,
+        workload: row.get("workload")?,
+        kind: row.get("kind")?,
+        message_id: row.get("message_id")?,
+        prompt_text: row.get("prompt_text")?,
+        source_ref: row.get("source_ref")?,
+        storage_path: row.get("storage_path")?,
+        bytes: row.get("bytes")?,
+        mime_type: row.get("mime_type")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+fn voice_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VoiceRow> {
+    Ok(VoiceRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        host_id: row.get("host_id")?,
+        source_kind: row.get("source_kind")?,
+        source_ref: row.get("source_ref")?,
+        duration_ms: row.get("duration_ms")?,
+        created_at: row.get("created_at")?,
+        last_used_at: row.get("last_used_at")?,
+    })
+}
+
 impl Db {
     /// Open (creating parent dirs), set pragmas, run pending migrations.
     pub fn open(path: &Path) -> Result<Self, DbError> {
@@ -520,6 +631,247 @@ impl Db {
             conn.execute(
                 "UPDATE endpoints SET last_test_status = ?, last_tested_at = ? WHERE id = ?",
                 params![status, tested_at, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    // ---- remote_hosts ----
+
+    pub async fn insert_remote_host(&self, host: &RemoteHostRow) -> Result<(), DbError> {
+        let h = host.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO remote_hosts ({REMOTE_HOST_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    h.id,
+                    h.name,
+                    h.base_url,
+                    h.tls_verify,
+                    h.has_token,
+                    h.status,
+                    h.last_checked_at,
+                    h.workloads_json,
+                    h.created_at,
+                    h.updated_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_remote_hosts(&self) -> Result<Vec<RemoteHostRow>, DbError> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {REMOTE_HOST_COLUMNS} FROM remote_hosts ORDER BY created_at"
+            ))?;
+            let rows = stmt
+                .query_map([], remote_host_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn get_remote_host(&self, id: &str) -> Result<Option<RemoteHostRow>, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let mut stmt =
+                conn.prepare(&format!("SELECT {REMOTE_HOST_COLUMNS} FROM remote_hosts WHERE id = ?"))?;
+            let mut rows = stmt.query_map(params![id], remote_host_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    /// Overwrite a remote_hosts row (read-modify-write happens in the handler).
+    pub async fn update_remote_host(&self, host: &RemoteHostRow) -> Result<(), DbError> {
+        let h = host.clone();
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE remote_hosts SET name = ?, base_url = ?, tls_verify = ?, has_token = ?, \
+                 status = ?, last_checked_at = ?, workloads_json = ?, updated_at = ? WHERE id = ?",
+                params![
+                    h.name,
+                    h.base_url,
+                    h.tls_verify,
+                    h.has_token,
+                    h.status,
+                    h.last_checked_at,
+                    h.workloads_json,
+                    h.updated_at,
+                    h.id,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn delete_remote_host(&self, id: &str) -> Result<bool, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let n = conn.execute("DELETE FROM remote_hosts WHERE id = ?", params![id])?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    /// Update cached reachability + capability snapshot from a `/health` probe.
+    pub async fn update_remote_host_status(
+        &self,
+        id: &str,
+        status: &str,
+        workloads_json: Option<&str>,
+        checked_at: &str,
+    ) -> Result<(), DbError> {
+        let (id, status, workloads_json, checked_at) = (
+            id.to_string(),
+            status.to_string(),
+            workloads_json.map(|s| s.to_string()),
+            checked_at.to_string(),
+        );
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE remote_hosts SET status = ?, workloads_json = ?, last_checked_at = ?, \
+                 updated_at = ? WHERE id = ?",
+                params![status, workloads_json, checked_at, checked_at, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    // ---- generated_assets ----
+
+    pub async fn insert_asset(&self, asset: &GeneratedAssetRow) -> Result<(), DbError> {
+        let a = asset.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO generated_assets ({GENERATED_ASSET_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    a.id,
+                    a.host_id,
+                    a.workload,
+                    a.kind,
+                    a.message_id,
+                    a.prompt_text,
+                    a.source_ref,
+                    a.storage_path,
+                    a.bytes,
+                    a.mime_type,
+                    a.created_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_asset(&self, id: &str) -> Result<Option<GeneratedAssetRow>, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {GENERATED_ASSET_COLUMNS} FROM generated_assets WHERE id = ?"
+            ))?;
+            let mut rows = stmt.query_map(params![id], generated_asset_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    /// List asset storage paths for a host (for file cleanup on host delete).
+    pub async fn list_asset_paths_by_host(
+        &self,
+        host_id: &str,
+    ) -> Result<Vec<String>, DbError> {
+        let host_id = host_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT storage_path FROM generated_assets WHERE host_id = ?",
+            )?;
+            let rows = stmt
+                .query_map(params![host_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    // ---- voices ----
+
+    pub async fn insert_voice(&self, voice: &VoiceRow) -> Result<(), DbError> {
+        let v = voice.clone();
+        self.call(move |conn| {
+            conn.execute(
+                &format!(
+                    "INSERT INTO voices ({VOICE_COLUMNS}) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                params![
+                    v.id,
+                    v.name,
+                    v.host_id,
+                    v.source_kind,
+                    v.source_ref,
+                    v.duration_ms,
+                    v.created_at,
+                    v.last_used_at,
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn list_voices(&self, host_id: &str) -> Result<Vec<VoiceRow>, DbError> {
+        let host_id = host_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {VOICE_COLUMNS} FROM voices WHERE host_id = ? ORDER BY created_at"
+            ))?;
+            let rows = stmt
+                .query_map(params![host_id], voice_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    pub async fn get_voice(&self, id: &str) -> Result<Option<VoiceRow>, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let mut stmt =
+                conn.prepare(&format!("SELECT {VOICE_COLUMNS} FROM voices WHERE id = ?"))?;
+            let mut rows = stmt.query_map(params![id], voice_from_row)?;
+            Ok(rows.next().transpose()?)
+        })
+        .await
+    }
+
+    pub async fn delete_voice(&self, id: &str) -> Result<bool, DbError> {
+        let id = id.to_string();
+        self.call(move |conn| {
+            let n = conn.execute("DELETE FROM voices WHERE id = ?", params![id])?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    pub async fn touch_voice(&self, id: &str, used_at: &str) -> Result<(), DbError> {
+        let (id, used_at) = (id.to_string(), used_at.to_string());
+        self.call(move |conn| {
+            conn.execute(
+                "UPDATE voices SET last_used_at = ? WHERE id = ?",
+                params![used_at, id],
             )?;
             Ok(())
         })

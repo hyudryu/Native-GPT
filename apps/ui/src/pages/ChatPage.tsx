@@ -46,6 +46,42 @@ type ToolCallEntry = {
   error?: { code: string; message: string } | null;
 };
 
+/**
+ * If a tool result includes generated asset data (from comfyui_generate or
+ * openvoice_tts), render the asset inline — an <img> for images/video posters,
+ * an <audio> player for audio.
+ */
+function AssetPreview({ data }: { data: unknown }) {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  const assetUrl = d.asset_url;
+  const kind = d.kind;
+  if (typeof assetUrl !== "string" || !assetUrl) return null;
+  if (kind === "audio") {
+    return (
+      <div className="mt-2">
+        <audio controls src={assetUrl} className="w-full" />
+      </div>
+    );
+  }
+  if (kind === "image" || kind === "video") {
+    return (
+      <div className="mt-2">
+        {kind === "image" ? (
+          <img
+            src={assetUrl}
+            alt={(d.prompt as string) ?? "Generated image"}
+            className="max-h-80 w-full rounded-xl border border-border object-contain"
+          />
+        ) : (
+          <video controls src={assetUrl} className="max-h-80 w-full rounded-xl border border-border" />
+        )}
+      </div>
+    );
+  }
+  return null;
+}
+
 /** A pending human-in-the-loop approval prompt for a gated tool call. */
 type ApprovalPrompt = {
   approvalId: string;
@@ -140,6 +176,7 @@ function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
                 {entry.data !== undefined && (
                   <div>
                     <p className="text-fg-subtle">output</p>
+                    <AssetPreview data={entry.data} />
                     <pre className="mt-0.5 overflow-x-auto rounded bg-surface-2 p-2 text-fg">{JSON.stringify(entry.data, null, 2)}</pre>
                   </div>
                 )}
