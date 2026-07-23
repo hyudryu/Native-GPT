@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router";
 import {
   Check,
@@ -27,24 +26,16 @@ import {
   useUpdateConversation,
   type EnabledModel,
   type PersistedToolEvent,
-  type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import {
+  EMPTY_LIVE_RUN,
+  useRunStore,
+  type Activity,
+  type ApprovalPrompt,
+  type ToolCallEntry,
+} from "../lib/runStore";
 import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
-
-type Activity = { message: string; source?: string };
-
-type ToolCallStatus = "pending" | "ok" | "error";
-
-type ToolCallEntry = {
-  callId: string;
-  tool: string;
-  input?: unknown;
-  status: ToolCallStatus;
-  summary?: string;
-  data?: unknown;
-  error?: { code: string; message: string } | null;
-};
 
 /**
  * If a tool result includes generated asset data (from comfyui_generate or
@@ -81,14 +72,6 @@ function AssetPreview({ data }: { data: unknown }) {
   }
   return null;
 }
-
-/** A pending human-in-the-loop approval prompt for a gated tool call. */
-type ApprovalPrompt = {
-  approvalId: string;
-  tool: string;
-  input?: unknown;
-  prompt: string;
-};
 
 /**
  * Convert a persisted tool-events trace into the same shape the live
@@ -427,7 +410,6 @@ function NewConversation() {
 
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-  const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
   const conversation = useConversation(conversationId);
@@ -439,12 +421,15 @@ export default function ChatPage() {
   const cancel = useCancelRun();
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
-  const [activeRun, setActiveRun] = useState<RunRef | null>(null);
-  const [streamText, setStreamText] = useState("");
-  const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
-  const [approval, setApproval] = useState<ApprovalPrompt | null>(null);
+  // Live agent-run state is per conversation in the global store, so
+  // navigating away mid-run never leaks one conversation's run into another.
+  const live = useRunStore((s) =>
+    conversationId ? (s.byConversation[conversationId] ?? EMPTY_LIVE_RUN) : EMPTY_LIVE_RUN,
+  );
+  const startRun = useRunStore((s) => s.startRun);
+  const stopRun = useRunStore((s) => s.stopRun);
+  const clearApproval = useRunStore((s) => s.clearApproval);
+  const { activeRun, streamText, activity, streamError, toolCalls, approval } = live;
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -465,18 +450,16 @@ export default function ChatPage() {
     if (!model) return;
     autoSentRef.current = true;
     if (state.modelValue) setSelectedModel(state.modelValue);
-    setStreamText("");
-    setStreamError(null);
     send.mutate(
       {
         content: state.firstMessage,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
       },
-      { onSuccess: ({ run }) => setActiveRun(run) },
+      { onSuccess: ({ run }) => startRun(conversationId, run) },
     );
     navigate(location.pathname, { replace: true, state: null });
-  }, [location, conversationId, messages.isPending, messages.data, navigate, send]);
+  }, [location, conversationId, messages.isPending, messages.data, navigate, send, startRun]);
 
   useEffect(() => {
     const available = enabledModels.data ?? [];
@@ -500,119 +483,9 @@ export default function ChatPage() {
     });
   }, [conversation.data, enabledModels.data, projects.data]);
 
-  useEffect(() => {
-    if (!activeRun || !conversationId) return;
-    // Fresh run — clear the previous run's tool trace.
-    setToolCalls([]);
-    const matches = (requestId: string, payload: Record<string, unknown>) =>
-      requestId === activeRun.request_id || payload.run_id === activeRun.id;
-    const offDelta = socket.on("run.text_delta", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.text !== "string") return;
-      setStreamText((current) => current + payload.text);
-    });
-    const offActivity = socket.on("run.activity", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.message !== "string") return;
-      setActivity({
-        message: payload.message,
-        ...(typeof payload.source === "string" ? { source: payload.source } : {}),
-      });
-    });
-    const offToolCall = socket.on("run.tool_call", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const tool = typeof payload.tool === "string" ? payload.tool : "tool";
-      const input = payload.input;
-      setToolCalls((current) => {
-        if (current.some((entry) => entry.callId === callId)) return current;
-        return [
-          ...current,
-          { callId, tool, input, status: "pending" as ToolCallStatus },
-        ];
-      });
-    });
-    const offToolResult = socket.on("run.tool_result", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const ok = payload.ok === true;
-      const summary = typeof payload.summary === "string" ? payload.summary : undefined;
-      const data = payload.data;
-      const error = (payload.error ?? null) as { code: string; message: string } | null;
-      setToolCalls((current) =>
-        current.map((entry) =>
-          entry.callId === callId
-            ? {
-                ...entry,
-                status: ok ? "ok" : ("error" as ToolCallStatus),
-                summary,
-                data,
-                error,
-              }
-            : entry,
-        ),
-      );
-    });
-    const offApprovalNeeded = socket.on("run.approval_needed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      const next: ApprovalPrompt = {
-        approvalId: payload.approval_id,
-        tool: typeof payload.tool === "string" ? payload.tool : "tool",
-        input: payload.input,
-        prompt:
-          typeof payload.prompt === "string" ? payload.prompt : "Approve this tool call?",
-      };
-      setApproval((current) => {
-        // Strands runs tools sequentially, so a second prompt means the first
-        // was orphaned (e.g. its resolution event was missed) — replace it.
-        if (current) {
-          console.warn(`replacing unresolved approval ${current.approvalId}`);
-        }
-        return next;
-      });
-    });
-    const offApprovalResolved = socket.on("run.approval_resolved", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      setApproval((current) =>
-        current && current.approvalId === payload.approval_id ? null : current,
-      );
-    });
-    const offCompleted = socket.on("run.completed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      setActiveRun(null);
-      setApproval(null);
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    const offFailed = socket.on("run.failed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      const error = payload.error as { message?: string } | undefined;
-      setStreamError(error?.message ?? "The response failed.");
-      setActiveRun(null);
-      setApproval(null);
-      // The host persists any partial assistant text on failure/cancel — refetch.
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    return () => {
-      offDelta();
-      offActivity();
-      offToolCall();
-      offToolResult();
-      offApprovalNeeded();
-      offApprovalResolved();
-      offCompleted();
-      offFailed();
-    };
-  }, [activeRun, conversationId, queryClient]);
+  // run.* WS events are handled by the global router in lib/runStore.ts,
+  // which dispatches each event to the slice of the conversation that owns
+  // the run — no per-page subscription needed here.
 
   // ── Auto-scroll to bottom ──────────────────────────────────────────────────
 
@@ -709,7 +582,7 @@ export default function ChatPage() {
       timestamp: new Date().toISOString(),
       payload: { approval_id: approval.approvalId, approved },
     });
-    setApproval(null);
+    clearApproval(conversationId);
   };
 
   const submit = (event: React.FormEvent) => {
@@ -718,9 +591,6 @@ export default function ChatPage() {
     const model = parseModelOptionValue(selectedModel);
     if (!content || activeRun || send.isPending || !model) return;
     setDraft("");
-    setStreamText("");
-    setActivity({ message: "Thinking through the request" });
-    setStreamError(null);
     // Always send the picker selection with the message so the model the user
     // sees is the model that runs — even if the conversation row still holds a
     // stale or since-disabled model (the PATCH in chooseModel may not have
@@ -732,7 +602,9 @@ export default function ChatPage() {
         model_id: model.model_id,
       },
       {
-        onSuccess: ({ run }) => setActiveRun(run),
+        // Register the run against the conversation it was SENT to — the user
+        // may have navigated elsewhere before this response arrives.
+        onSuccess: ({ run }) => startRun(conversationId, run),
         onError: () => setDraft(content),
       },
     );
@@ -858,14 +730,7 @@ export default function ChatPage() {
               type="button"
               onClick={() =>
                 cancel.mutate(activeRun.id, {
-                  onSuccess: () => {
-                    setActiveRun(null);
-                    setStreamError("Response stopped.");
-                    // Partial assistant text is persisted on cancel — refetch.
-                    void queryClient
-                      .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-                      .then(() => setStreamText(""));
-                  },
+                  onSuccess: () => stopRun(conversationId),
                 })
               }
               disabled={cancel.isPending}

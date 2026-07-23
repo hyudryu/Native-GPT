@@ -200,6 +200,7 @@ class ChatRuns:
         self,
         event: dict,
         run_id: str,
+        conversation_id: str,
         request_id: str,
         sequence: int,
         pending_tools: dict[str, str],
@@ -221,6 +222,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": run_id,
+                        "conversation_id": conversation_id,
                         "call_id": call.call_id,
                         "tool": call.tool,
                         "input": call.input,
@@ -236,6 +238,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": run_id,
+                        "conversation_id": conversation_id,
                         "call_id": result.call_id,
                         "tool": tool_name,
                         "ok": result.ok,
@@ -264,6 +267,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "error": {
                             "code": "cancelled" if cancelled else "model_error",
                             "message": "Run cancelled by the user" if cancelled else str(exc),
@@ -315,6 +319,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "approval_id": approval_id,
                         "tool": str(tool_use.get("name") or "tool"),
                         "input": raw_input if isinstance(raw_input, dict) else {},
@@ -333,6 +338,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "approval_id": approval_id,
                         "approved": approved,
                     },
@@ -382,7 +388,11 @@ class ChatRuns:
             make_envelope(
                 "run.activity",
                 request_id,
-                {"run_id": payload.run_id, "message": "Thinking through the request"},
+                {
+                    "run_id": payload.run_id,
+                    "conversation_id": payload.conversation_id,
+                    "message": "Thinking through the request",
+                },
             ).model_copy(update={"sequence": sequence})
         )
         sequence += 1
@@ -397,6 +407,7 @@ class ChatRuns:
             sequence = self._emit_tool_events(
                 event,
                 payload.run_id,
+                payload.conversation_id,
                 request_id,
                 sequence,
                 pending_tools,
@@ -408,7 +419,11 @@ class ChatRuns:
                     make_envelope(
                         "run.activity",
                         request_id,
-                        {"run_id": payload.run_id, **activity},
+                        {
+                            "run_id": payload.run_id,
+                            "conversation_id": payload.conversation_id,
+                            **activity,
+                        },
                     ).model_copy(update={"sequence": sequence})
                 )
                 sequence += 1
@@ -418,7 +433,11 @@ class ChatRuns:
                     make_envelope(
                         "run.text_delta",
                         request_id,
-                        {"run_id": payload.run_id, "text": text},
+                        {
+                            "run_id": payload.run_id,
+                            "conversation_id": payload.conversation_id,
+                            "text": text,
+                        },
                     ).model_copy(update={"sequence": sequence})
                 )
                 sequence += 1
@@ -430,6 +449,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "error": {
                             "code": "cancelled",
                             "message": "Run cancelled by the user",
@@ -444,7 +464,11 @@ class ChatRuns:
             make_envelope(
                 "run.completed",
                 request_id,
-                {"run_id": payload.run_id, "usage": usage_from_result(result)},
+                {
+                    "run_id": payload.run_id,
+                    "conversation_id": payload.conversation_id,
+                    "usage": usage_from_result(result),
+                },
             ).model_copy(update={"sequence": sequence})
         )
 
