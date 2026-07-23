@@ -584,12 +584,16 @@ function ComposerChips({
   if (files.length === 0 && tools.length === 0) return null;
   const chipClass =
     "flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-xs text-fg";
+  // Picked tools are directives ("the agent will use this") — render them
+  // bold on an accent background to stand apart from passive file chips.
+  const toolChipClass =
+    "flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent-subtle px-2 py-1 text-xs font-semibold text-fg";
   return (
     <ul aria-label="Attachments" className="flex flex-wrap gap-1.5 px-1 pt-1">
       {tools.map((tool) => (
-        <li key={`tool-${tool.id}`} className={chipClass}>
-          <Wrench className="size-3 shrink-0 text-fg-subtle" aria-hidden />
-          <span className="max-w-40 truncate">{tool.name}</span>
+        <li key={`tool-${tool.id}`} className={toolChipClass}>
+          <Wrench className="size-3 shrink-0 text-accent" aria-hidden />
+          <span className="max-w-40 truncate font-semibold">{tool.name}</span>
           <button
             type="button"
             onClick={() => onRemoveTool(tool.id)}
