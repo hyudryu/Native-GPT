@@ -1,0 +1,10 @@
+{
+  "id": "memory",
+  "name": "Memory",
+  "description": "Scoped assistant memory: save and recall concise reusable preferences, decisions, and facts across run, conversation, project, profile, and user scopes. Hybrid FTS + feature-vector search, proposals for sensitive content, secret rejection. Backed by the memories tables in the app database.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

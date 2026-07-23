@@ -14,6 +14,7 @@ tools/
     db.py               # shared SQLite access (host DB conventions)
     context.py          # current run_id / conversation_id
     testdb.py           # test helper: build a scratch DB from the real migrations
+    vectorize.py        # deterministic feature-hash embeddings (memory/knowledge)
     test_paths.py
 ```
 
@@ -65,13 +66,20 @@ rejected before any disk access. See `_lib/paths.py`.
 
 ## Database-backed tools
 
-Tools like `todo-list` (planner / micro-goals) and `goal-supervisor` (goal
-contracts + deterministic validation) persist to the app's SQLite database
+Tools like `todo-list` (planner / micro-goals), `goal-supervisor` (goal
+contracts + deterministic validation), and `memory` (scoped assistant memory
+with hybrid FTS + feature-vector recall) persist to the app's SQLite database
 via `_lib/db.py`, which mirrors the host's path resolution
 (`AGENTGPT_DATA_DIR`, else `<repo>/app-data/database/agentgpt.sqlite3`) and
 pragmas (WAL, busy timeout, foreign keys). Their tables come from migration
 `0011_agent_intelligence`. Tools stay stdlib-only (sqlite3, json, uuid,
-datetime) — no pip dependencies.
+datetime, hashlib) — no pip dependencies.
+
+The memory tool blends lexical FTS5 matching with cosine similarity over
+deterministic feature-hash vectors from `_lib/vectorize.py` (a Python port of
+the Rust host's `vectorize` in `crates/server/src/knowledge.rs`; vectors are
+not bit-compatible with Rust-produced ones, so stored embeddings carry an
+`embedding_version` and can be rebuilt).
 
 Scoped tools learn the active run/conversation from `_lib/context.py`: the
 runtime's `run_context` context vars when called inside a run, the
