@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 Emit = Callable[[Envelope], None]
 
+# Default persona for ordinary chat runs when the host does not supply a
+# system prompt. Factory runs have their own FACTORY_SYSTEM_PROMPT.
+DEFAULT_SYSTEM_PROMPT = """\
+You are a helpful desktop assistant. Format answers in GitHub-flavored
+markdown: use headings, lists, tables, blockquotes, and fenced code blocks with
+a language tag when they make the answer clearer. Keep responses focused and
+skimmable. Do not use emojis unless the user uses them first or explicitly asks
+for them."""
+
 
 def openai_base_url(value: str) -> str:
     """Accept either a provider root or its OpenAI ``/v1`` API prefix."""
@@ -362,6 +371,8 @@ class ChatRuns:
             )
 
             system_prompt = FACTORY_SYSTEM_PROMPT
+        if not system_prompt:
+            system_prompt = DEFAULT_SYSTEM_PROMPT
 
         agent = Agent(
             model=model,
