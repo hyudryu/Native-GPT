@@ -61,24 +61,23 @@ the proposal for a human to review.";
 
 /// Build the Tool Manager system prompt. Create mode uses FACTORY_CREATE_PROMPT;
 /// revision mode embeds the existing tool's manifest + source as context and
-/// instructs the model to return the full revised tool_code.
+/// instructs the model to return the full revised tool_code. Errors loading
+/// the existing tool propagate so the client gets a clear failure instead of
+/// a misleading empty-context revision prompt.
 async fn factory_system_prompt(
     user_request: &str,
     revision_target: Option<&str>,
     state: &SharedState,
-) -> String {
+) -> Result<String, ApiError> {
     let (mode_line, context) = match revision_target {
         Some(id) => {
-            let existing = crate::tools::read_tool_source_public(state, id)
-                .ok()
-                .map(|s| {
-                    format!(
-                        "\n\nCURRENT MANIFEST:\n{}\n\nCURRENT tool.py:\n{}\n",
-                        serde_json::to_string_pretty(&s.manifest).unwrap_or_default(),
-                        s.tool_code,
-                    )
-                })
-                .unwrap_or_default();
+            let s = crate::tools::read_tool_source_public(state, id)?;
+            let manifest_json = serde_json::to_string_pretty(&s.manifest)
+                .map_err(|e| ApiError::internal(format!("failed to serialize manifest: {e}")))?;
+            let existing = format!(
+                "\n\nCURRENT MANIFEST:\n{manifest_json}\n\nCURRENT tool.py:\n{}\n",
+                s.tool_code,
+            );
             (
                 "You are the Tool Manager in REVISION mode. Apply the user's \
                  change to the existing tool below and call save_tool EXACTLY \
@@ -89,7 +88,7 @@ async fn factory_system_prompt(
         }
         None => (FACTORY_CREATE_PROMPT, String::new()),
     };
-    format!("{mode_line}{context}\n\nUSER REQUEST: {user_request}")
+    Ok(format!("{mode_line}{context}\n\nUSER REQUEST: {user_request}"))
 }
 
 pub async fn send_message(
@@ -155,7 +154,7 @@ pub async fn send_message(
     // sidecar only exposes save_tool. A revision embeds the current tool.
     let factory_mode = body.factory_mode;
     let system_prompt = if factory_mode {
-        Some(factory_system_prompt(content, body.factory_revision.as_deref(), &state).await)
+        Some(factory_system_prompt(content, body.factory_revision.as_deref(), &state).await?)
     } else {
         system_prompt
     };

@@ -107,14 +107,15 @@ fn write_tool_files(
     } else if !dir.is_dir() {
         return Err(ApiError::not_found(format!("tool {id} not found")));
     }
+    // Clamp the timeout hint before writing so the persisted value matches
+    // what we return to the caller.
+    manifest.timeout_seconds = manifest.timeout_seconds.map(|v| v.min(86_400));
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| ApiError::internal(format!("failed to serialize manifest: {e}")))?;
     std::fs::write(dir.join("manifest.json"), format!("{json}\n"))
         .map_err(|e| ApiError::internal(e.to_string()))?;
     std::fs::write(dir.join("tool.py"), tool_code)
         .map_err(|e| ApiError::internal(e.to_string()))?;
-    // Clamp the timeout hint in memory; persisted manifest is unchanged.
-    manifest.timeout_seconds = manifest.timeout_seconds.map(|v| v.min(86_400));
     Ok(manifest)
 }
 
@@ -327,7 +328,10 @@ pub async fn rollback(
     if !valid_id(&id) {
         return Err(ApiError::bad_request("invalid tool id"));
     }
-    crate::defaults::restore(&state.repo_root, &id).map_err(ApiError::conflict)?;
+    crate::defaults::restore(&state.repo_root, &id).map_err(|e| match e {
+        crate::defaults::RestoreError::NotBuiltin(_) => ApiError::conflict(e.to_string()),
+        crate::defaults::RestoreError::Internal(_) => ApiError::internal(e.to_string()),
+    })?;
     let tool = list_for_state(&state)
         .await?
         .into_iter()
@@ -403,5 +407,27 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn clamps_timeout_before_writing_to_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let written = write_tool_files(
+            root,
+            "clock",
+            serde_json::json!({
+                "id": "clock", "name": "Clock", "description": "x", "version": "1.0.0",
+                "timeout_seconds": 999_999_999,
+            }),
+            "TOOL = None\n",
+            true,
+        )
+        .unwrap();
+        // Returned value is clamped.
+        assert_eq!(written.timeout_seconds, Some(86_400));
+        // On-disk value matches the returned (clamped) value.
+        let src = read_tool_source(root, "clock").unwrap();
+        assert_eq!(src.manifest.timeout_seconds, Some(86_400));
     }
 }

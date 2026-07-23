@@ -42,3 +42,20 @@ def test_factory_prompt_instructs_single_call() -> None:
     assert "EXACTLY ONCE" in FACTORY_SYSTEM_PROMPT
     assert "save_tool" in FACTORY_SYSTEM_PROMPT
     assert "TOOL = " in FACTORY_SYSTEM_PROMPT
+
+
+def test_save_tool_clamps_negative_timeout() -> None:
+    """A negative timeout from the model must not reach the Rust u32 field."""
+    result = _save_tool_body(
+        id="clock",
+        name="Clock",
+        description="x",
+        version="1.0.0",
+        risk="read",
+        requires_approval=False,
+        network="none",
+        timeout_seconds=-5,
+        trusted=False,
+        tool_code="TOOL = None\n",
+    )
+    assert result["manifest"]["timeout_seconds"] == 0

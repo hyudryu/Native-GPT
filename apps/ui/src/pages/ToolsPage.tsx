@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { RotateCcw, ShieldAlert, Store, Wrench } from "lucide-react";
 import AppPage, { panel, primaryButton, secondaryButton } from "../features/apps/AppPage";
@@ -33,6 +34,13 @@ export default function ToolsPage() {
   const update = useUpdateTool();
   const rollback = useRollbackTool();
   const navigate = useNavigate();
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
+  const handleRollback = (id: string) => {
+    setRollbackError(null);
+    rollback.mutate(id, {
+      onError: (e) => setRollbackError(e.message),
+    });
+  };
   return (
     <AppPage
       title="Tools"
@@ -50,6 +58,7 @@ export default function ToolsPage() {
       }
     >
       {tools.isError && <p role="alert" className="rounded-xl bg-danger-subtle p-3 text-sm text-danger">{tools.error.message}</p>}
+      {rollbackError && <p role="alert" className="rounded-xl bg-danger-subtle p-3 text-sm text-danger">{rollbackError}</p>}
       <div className="grid gap-4 md:grid-cols-2">
         {tools.data?.tools.map((tool) => (
           <article key={tool.id} className={panel}>
@@ -67,7 +76,7 @@ export default function ToolsPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button type="button" className={secondaryButton} onClick={() => navigate(`/apps/tools/factory/${tool.id}`)}>Edit</button>
                 {tool.factory_default && (
-                  <button type="button" className={secondaryButton} disabled={rollback.isPending} title="Reset this tool to the version that shipped with the app" onClick={() => rollback.mutate(tool.id)}>
+                  <button type="button" className={secondaryButton} disabled={rollback.isPending} title="Reset this tool to the version that shipped with the app" onClick={() => handleRollback(tool.id)}>
                     <RotateCcw className="size-4" aria-hidden /> Reset to default
                   </button>
                 )}

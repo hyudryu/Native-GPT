@@ -10,7 +10,7 @@ import {
   useUpdateToolFiles,
   type ToolManifest,
 } from "../lib/appsApi";
-import { createConversation, sendMessage } from "../lib/dataApi";
+import { createConversation, deleteConversation, sendMessage } from "../lib/dataApi";
 
 const RISK_OPTIONS = ["read", "write", "execute", "external_side_effect"] as const;
 const NETWORK_OPTIONS = ["none", "outbound"] as const;
@@ -81,14 +81,21 @@ export default function ToolFactoryPage() {
         endpoint_id: model.provider_id,
         model_id: model.model_id,
       });
-      const res = await sendMessage(conv.id, {
-        content: requirement,
-        endpoint_id: model.provider_id,
-        model_id: model.model_id,
-        factory_mode: true,
-        factory_revision: isEdit ? toolId : undefined,
-      });
-      activeRun.current = { requestId: res.run.request_id, runId: res.run.id };
+      try {
+        const res = await sendMessage(conv.id, {
+          content: requirement,
+          endpoint_id: model.provider_id,
+          model_id: model.model_id,
+          factory_mode: true,
+          factory_revision: isEdit ? toolId : undefined,
+        });
+        activeRun.current = { requestId: res.run.request_id, runId: res.run.id };
+      } catch (sendErr) {
+        // sendMessage failed after the conversation was created — clean up the
+        // orphan so it doesn't linger in the conversation list.
+        void deleteConversation(conv.id).catch(() => {});
+        throw sendErr;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start generation");
       setStreaming(false);
@@ -143,6 +150,7 @@ export default function ToolFactoryPage() {
       offToolCall();
       offCompleted();
       offFailed();
+      activeRun.current = null;
     };
   }, []);
 

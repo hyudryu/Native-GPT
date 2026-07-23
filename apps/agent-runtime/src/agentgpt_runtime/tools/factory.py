@@ -48,6 +48,9 @@ def _save_tool_body(
     Kept separate from the ``@tool``-decorated wrapper so tests can call it
     directly without Strands' tool-call dispatch machinery.
     """
+    # Clamp to a non-negative int so the Rust backend's u32 deserialization
+    # never rejects the proposal on a negative value from the model.
+    timeout_seconds = max(0, int(timeout_seconds))
     return {
         "status": "proposed",
         "manifest": {

@@ -25,25 +25,44 @@ fn has_bundled_file(id: &str, file: &str) -> bool {
     })
 }
 
+/// Why a rollback failed. Maps to distinct HTTP status codes in the handler.
+#[derive(Debug)]
+pub enum RestoreError {
+    /// The id is not a shipped built-in tool — not rollback-eligible (409).
+    NotBuiltin(String),
+    /// Something else went wrong: missing bundled file or I/O failure (500).
+    Internal(String),
+}
+
+impl std::fmt::Display for RestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RestoreError::NotBuiltin(id) => write!(f, "tool {id} is not a built-in tool"),
+            RestoreError::Internal(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
 /// Restore a built-in tool's `manifest.json` + `tool.py` to the shipped
 /// version. Returns Ok only if the id is bundled and writes succeed.
-pub fn restore(repo_root: &Path, id: &str) -> Result<(), String> {
+pub fn restore(repo_root: &Path, id: &str) -> Result<(), RestoreError> {
     let dir = BUNDLED_TOOLS
         .get_dir(id)
-        .ok_or_else(|| format!("tool {id} is not a built-in tool"))?;
+        .ok_or_else(|| RestoreError::NotBuiltin(id.to_string()))?;
     let dest = repo_root.join("tools").join(id);
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dest).map_err(|e| RestoreError::Internal(e.to_string()))?;
     for file in ["manifest.json", "tool.py"] {
         let entry = dir
             .entries()
             .iter()
             .find(|entry| entry.path().file_name().is_some_and(|name| name == file))
-            .ok_or_else(|| format!("built-in {id} missing {file}"))?;
+            .ok_or_else(|| RestoreError::Internal(format!("built-in {id} missing {file}")))?;
         let contents = entry
             .as_file()
-            .ok_or_else(|| format!("built-in {id}/{file} is not a file"))?
+            .ok_or_else(|| RestoreError::Internal(format!("built-in {id}/{file} is not a file")))?
             .contents();
-        std::fs::write(dest.join(file), contents).map_err(|e| e.to_string())?;
+        std::fs::write(dest.join(file), contents)
+            .map_err(|e| RestoreError::Internal(e.to_string()))?;
     }
     Ok(())
 }
