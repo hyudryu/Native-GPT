@@ -1,4 +1,4 @@
--- 0006_generated_assets: outputs produced by remote workloads (images, video, audio).
+-- 0007_generated_assets: outputs produced by remote workloads (images, video, audio).
 -- Bytes live on disk under app-data/assets/; this table holds metadata only.
 
 CREATE TABLE generated_assets (

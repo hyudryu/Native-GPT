@@ -47,6 +47,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "multipart"] }
 tauri = "2.11"
 tauri-build = "2.6"
+include_dir = "0.7"
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

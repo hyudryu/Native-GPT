@@ -1,4 +1,4 @@
--- 0007_voices: registry of cloned-voice reference clips.
+-- 0008_voices: registry of cloned-voice reference clips.
 -- The raw clip and extracted speaker embedding live on the bridge host; this
 -- table stores only metadata. voice_id is the bridge-side identifier.
 

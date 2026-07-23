@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "./auth";
 
-export interface KnowledgeSource { id: string; title: string; source_type: "paste" | "file" | "url"; source_uri?: string | null; chunk_count: number; created_at: string; }
+export interface KnowledgeSource { id: string; title: string; source_type: "paste" | "file" | "url"; source_uri?: string | null; chunk_count: number; created_at: string; project_id?: string | null; }
 export interface KnowledgeMatch { chunk_id: string; source_id: string; source_title: string; position: number; content: string; score: number; }
-export interface ToolInfo { id: string; name: string; description: string; version: string; trusted: boolean; enabled: boolean; folder: string; risk?: "read" | "write" | "execute" | "external_side_effect" | null; requires_approval?: boolean | null; network?: "none" | "outbound" | null; timeout_seconds?: number | null; }
+export interface ToolInfo { id: string; name: string; description: string; version: string; trusted: boolean; enabled: boolean; folder: string; risk?: "read" | "write" | "execute" | "external_side_effect" | null; requires_approval?: boolean | null; network?: "none" | "outbound" | null; timeout_seconds?: number | null; factory_default: boolean; }
 export interface ModelAnalytics { provider_name: string; model_id: string; runs: number; successful_runs: number; input_tokens: number; output_tokens: number; total_tokens: number; average_tokens_per_second: number; average_run_duration_ms: number; }
 export interface AnalyticsResponse { totals: Omit<ModelAnalytics, "provider_name" | "model_id" | "average_run_duration_ms">; models: ModelAnalytics[]; }
 export interface UpdateCheck { current_version: string; latest_version?: string | null; update_available: boolean; release_url: string; release_name?: string | null; release_notes?: string | null; published_at?: string | null; message: string; }
@@ -20,11 +20,41 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function useKnowledge() { return useQuery({ queryKey: ["knowledge"], queryFn: () => request<{ sources: KnowledgeSource[]; stats: { source_count: number; chunk_count: number } }>("/api/knowledge") }); }
-export function useIngestKnowledge() { const client = useQueryClient(); return useMutation({ mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string }) => request("/api/knowledge", { method: "POST", body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }) }); }
-export function useDeleteKnowledge() { const client = useQueryClient(); return useMutation({ mutationFn: (id: string) => request(`/api/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }) }); }
-export function useKnowledgeSearch(query: string) { return useQuery({ queryKey: ["knowledge-search", query], queryFn: () => request<{ query: string; matches: KnowledgeMatch[] }>(`/api/knowledge/search?q=${encodeURIComponent(query)}`), enabled: query.trim().length > 1 }); }
+export function useKnowledge(projectId?: string) {
+  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+  return useQuery({ queryKey: ["knowledge", projectId ?? null], queryFn: () => request<{ sources: KnowledgeSource[]; stats: { source_count: number; chunk_count: number } }>(`/api/knowledge${params}`) });
+}
+export function useIngestKnowledge(projectId?: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { title: string; source_type: "paste" | "file" | "url"; source_uri?: string; content?: string }) =>
+      request("/api/knowledge", { method: "POST", body: JSON.stringify({ ...input, project_id: projectId ?? null }) }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge"] }),
+  });
+}
+export function useDeleteKnowledge(projectId?: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request(`/api/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["knowledge", projectId ?? null] }),
+  });
+}
+export function useKnowledgeSearch(query: string, projectId?: string) {
+  const projectParam = projectId ? `&project_id=${encodeURIComponent(projectId)}` : "";
+  return useQuery({
+    queryKey: ["knowledge-search", query, projectId ?? null],
+    queryFn: () => request<{ query: string; matches: KnowledgeMatch[] }>(`/api/knowledge/search?q=${encodeURIComponent(query)}${projectParam}`),
+    enabled: query.trim().length > 1,
+  });
+}
 export function useAnalytics() { return useQuery({ queryKey: ["analytics"], queryFn: () => request<AnalyticsResponse>("/api/analytics/models") }); }
 export function useTools() { return useQuery({ queryKey: ["tools"], queryFn: () => request<{ tools: ToolInfo[] }>("/api/tools") }); }
 export function useUpdateTool() { const client = useQueryClient(); return useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => request(`/api/tools/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled }) }), onSuccess: () => client.invalidateQueries({ queryKey: ["tools"] }) }); }
+export interface ToolManifest { id: string; name: string; description: string; version: string; trusted: boolean; default_enabled?: boolean; risk?: "read" | "write" | "execute" | "external_side_effect" | null; requires_approval?: boolean | null; network?: "none" | "outbound" | null; timeout_seconds?: number | null; }
+export interface ToolSource { manifest: ToolManifest; tool_code: string; }
+export function useToolSource(id: string | undefined) { return useQuery({ queryKey: ["tools", id ?? "", "source"], queryFn: () => request<ToolSource>(`/api/tools/${encodeURIComponent(id!)}/source`), enabled: Boolean(id) }); }
+export function useCreateTool() { const client = useQueryClient(); return useMutation({ mutationFn: (input: { id: string; manifest: ToolManifest; tool_code: string }) => request<{ tool: ToolInfo }>("/api/tools", { method: "POST", body: JSON.stringify(input) }), onSuccess: () => client.invalidateQueries({ queryKey: ["tools"] }) }); }
+export function useUpdateToolFiles() { const client = useQueryClient(); return useMutation({ mutationFn: ({ id, manifest, tool_code }: { id: string; manifest: ToolManifest; tool_code: string }) => request<{ tool: ToolInfo }>(`/api/tools/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ manifest, tool_code }) }), onSuccess: () => client.invalidateQueries({ queryKey: ["tools"] }) }); }
+export function useRollbackTool() { const client = useQueryClient(); return useMutation({ mutationFn: (id: string) => request<{ tool: ToolInfo }>(`/api/tools/${encodeURIComponent(id)}/rollback`, { method: "POST" }), onSuccess: () => client.invalidateQueries({ queryKey: ["tools"] }) }); }
+export { useEnabledModels as useEnabledModelsForFactory } from "./dataApi";
 export function useCheckUpdates() { return useMutation({ mutationFn: () => request<UpdateCheck>("/api/updates/check") }); }

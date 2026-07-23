@@ -1,4 +1,4 @@
--- 0005_remote_hosts: registered remote backend hosts (the "bridge").
+-- 0006_remote_hosts: registered remote backend hosts (the "bridge").
 -- Mirrors the endpoints table: only a boolean has_token lives in the row;
 -- the raw bearer token is stored in the keychain under key "host:<id>".
 
