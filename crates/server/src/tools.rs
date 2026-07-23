@@ -182,20 +182,34 @@ fn manifests(repo_root: &Path) -> Result<Vec<(ToolManifest, String)>, ApiError> 
         {
             continue;
         }
-        let manifest: ToolManifest = serde_json::from_str(
-            &std::fs::read_to_string(path.join("manifest.json"))
-                .map_err(|error| ApiError::internal(error.to_string()))?,
-        )
-        .map_err(|error| ApiError::internal(format!("invalid tool manifest: {error}")))?;
+        // A single bad tool folder (corrupt manifest, id mismatch, I/O error)
+        // must not take down the entire tools list. Skip it with a warning so
+        // the user can still see and manage their other tools.
+        let manifest_result: Result<ToolManifest, _> = (|| {
+            let raw = std::fs::read_to_string(path.join("manifest.json"))
+                .map_err(|e| e.to_string())?;
+            serde_json::from_str::<ToolManifest>(&raw).map_err(|e| e.to_string())
+        })();
+        let manifest = match manifest_result {
+            Ok(m) => m,
+            Err(reason) => {
+                tracing::warn!(
+                    "skipping invalid tool manifest at {}: {reason}",
+                    path.display()
+                );
+                continue;
+            }
+        };
         let folder_name = path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if !valid_id(&manifest.id) || manifest.id != folder_name {
-            return Err(ApiError::internal(format!(
-                "tool manifest id must match its folder: {}",
+            tracing::warn!(
+                "skipping tool whose manifest id does not match its folder: {}",
                 path.display()
-            )));
+            );
+            continue;
         }
         tools.push((manifest, format!("tools/{folder_name}")));
     }
@@ -429,5 +443,39 @@ mod tests {
         // On-disk value matches the returned (clamped) value.
         let src = read_tool_source(root, "clock").unwrap();
         assert_eq!(src.manifest.timeout_seconds, Some(86_400));
+    }
+
+    #[test]
+    fn manifests_skips_bad_tool_without_breaking_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // A valid tool.
+        write_tool_files(
+            root,
+            "good-tool",
+            serde_json::json!({"id":"good-tool","name":"Good","description":"x","version":"1.0.0"}),
+            "TOOL = None\n",
+            true,
+        )
+        .unwrap();
+        // A tool with a corrupt manifest (bad JSON).
+        let bad_dir = root.join("tools").join("bad-tool");
+        std::fs::create_dir_all(&bad_dir).unwrap();
+        std::fs::write(bad_dir.join("manifest.json"), "{ not valid json").unwrap();
+        std::fs::write(bad_dir.join("tool.py"), "TOOL = None\n").unwrap();
+        // A tool whose manifest id doesn't match the folder.
+        let mismatch_dir = root.join("tools").join("mismatch-tool");
+        std::fs::create_dir_all(&mismatch_dir).unwrap();
+        std::fs::write(
+            mismatch_dir.join("manifest.json"),
+            r#"{"id":"wrong-id","name":"Mismatch","description":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(mismatch_dir.join("tool.py"), "TOOL = None\n").unwrap();
+
+        // The scanner must return only the valid tool, not error out.
+        let found = manifests(root).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0.id, "good-tool");
     }
 }
