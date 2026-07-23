@@ -117,11 +117,18 @@ function toolEntriesFromPersisted(events: PersistedToolEvent[]): ToolCallEntry[]
   return [...byCallId.values()];
 }
 
+/** Absolute timestamp shown when hovering a message, e.g. "Jul 22, 2026, 9:41 PM". */
+function formatTimestamp(iso: string): string {
+  const time = new Date(iso);
+  if (Number.isNaN(time.getTime())) return "";
+  return time.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (entries.length === 0) return null;
   return (
-    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-2xl flex-col gap-1.5">
+    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-[50.4rem] flex-col gap-1.5">
       {entries.map((entry) => {
         const open = openId === entry.callId;
         const Icon = entry.status === "pending" ? LoaderCircle : entry.status === "ok" ? Check : X;
@@ -186,7 +193,7 @@ function AgentActivity({ activity }: { activity: Activity }) {
     <section
       aria-label="Agent activity"
       aria-live="polite"
-      className="mr-auto w-full max-w-2xl px-1 py-2 text-sm"
+      className="mr-auto w-full max-w-[50.4rem] px-1 py-2 text-sm"
     >
       <p className="text-base leading-relaxed text-fg">{activity.message}</p>
       <div className="mt-3 flex items-center gap-3 text-fg-muted">
@@ -210,7 +217,7 @@ function ApprovalBanner({
   return (
     <section
       aria-label="Approval required"
-      className="mr-auto w-full max-w-2xl rounded-xl border border-warning bg-warning-subtle p-4 text-sm"
+      className="mr-auto w-full max-w-[50.4rem] rounded-xl border border-warning bg-warning-subtle p-4 text-sm"
     >
       <div className="flex items-center gap-2 font-medium text-fg">
         <ShieldAlert className="size-4 shrink-0 text-warning" aria-hidden />
@@ -371,7 +378,7 @@ function NewConversation() {
       <form
         aria-label="New conversation composer"
         onSubmit={submit}
-        className="mx-auto flex w-full max-w-2xl flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
+        className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
       >
         <textarea
           rows={2}
@@ -420,7 +427,7 @@ function NewConversation() {
         </div>
       </form>
       {models.isSuccess && models.data.length === 0 && (
-        <p role="status" className="max-w-2xl text-center text-xs text-warning">
+        <p role="status" className="max-w-[50.4rem] text-center text-xs text-warning">
           No models are enabled. Enable one in Settings → Providers.
         </p>
       )}
@@ -664,7 +671,7 @@ export default function ChatPage() {
         className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
         aria-busy={messages.isPending}
       >
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-4">
           {messages.isPending && (
             <p className="flex items-center gap-2 text-sm text-fg-muted">
               <LoaderCircle className="size-4 animate-spin" aria-hidden /> Loading messages…
@@ -691,18 +698,28 @@ export default function ChatPage() {
             return (
               <div key={message.id} className="contents">
                 {historicalToolCalls.length > 0 && <ToolCalls entries={historicalToolCalls} />}
-                <article
-                  aria-label={`${message.role} message`}
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-sm px-4 py-3 text-sm leading-relaxed ${
-                    user
-                      ? "ml-auto rounded-br-none bg-accent text-accent-contrast"
-                      : "mr-auto rounded-bl-none border border-border bg-surface-1 text-fg"
-                  }`}
-                >
-                  {user
-                    ? <PlainMessage content={text} />
-                    : <MarkdownMessage content={text} />}
-                </article>
+                <div className={`group flex flex-col ${user ? "items-end" : "items-start"}`}>
+                  <article
+                    aria-label={`${message.role} message`}
+                    className={
+                      user
+                        ? "max-w-[85%] whitespace-pre-wrap rounded-sm rounded-br-none bg-accent px-4 py-3 text-sm leading-relaxed text-accent-contrast"
+                        : "w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
+                    }
+                  >
+                    {user
+                      ? <PlainMessage content={text} />
+                      : <MarkdownMessage content={text} />}
+                  </article>
+                  {message.created_at && (
+                    <time
+                      dateTime={message.created_at}
+                      className="mt-0.5 px-1 text-[11px] text-fg-subtle opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                    >
+                      {formatTimestamp(message.created_at)}
+                    </time>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -713,7 +730,7 @@ export default function ChatPage() {
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
-              className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-sm rounded-bl-none border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
+              className="w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
             >
               {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
             </article>
@@ -731,14 +748,14 @@ export default function ChatPage() {
 
       <div className="px-4 pb-4 sm:px-6" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)" }}>
         {enabledModels.isSuccess && enabledModels.data.length === 0 && (
-          <p role="status" className="mx-auto mb-2 max-w-2xl text-xs text-warning">
+          <p role="status" className="mx-auto mb-2 max-w-[50.4rem] text-xs text-warning">
             No models are enabled. Enable one in Settings → Providers.
           </p>
         )}
         <form
           aria-label="Message composer"
           onSubmit={submit}
-          className="mx-auto flex w-full max-w-2xl items-end gap-2 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
+          className="mx-auto flex w-full max-w-[50.4rem] items-end gap-2 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
         >
           <textarea
             rows={1}
