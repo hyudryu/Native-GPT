@@ -21,11 +21,10 @@ done
 if [[ ! -d node_modules ]]; then pnpm install; fi
 if [[ ! -d apps/agent-runtime/.venv ]]; then uv sync --directory apps/agent-runtime; fi
 
-# Build UI so the host can serve it
-if [[ ! -d apps/ui/dist ]]; then
-  echo ">> building UI"
-  pnpm --filter @agentgpt/ui build
-fi
+# Build UI so the host can serve it. Rebuild every launch so source changes
+# are picked up (the host serves dist/ statically).
+echo ">> building UI"
+pnpm --filter @agentgpt/ui build
 
 if [[ "$UI_DEV" == "1" ]]; then
   echo ">> starting vite dev server (proxy -> 127.0.0.1:8787)"
