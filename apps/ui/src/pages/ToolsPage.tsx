@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { RotateCcw, ShieldAlert, Store, Wrench } from "lucide-react";
 import AppPage, { panel, primaryButton, secondaryButton } from "../features/apps/AppPage";
+import Toggle from "../components/Toggle";
 import { useRollbackTool, useTools, useUpdateTool, type ToolInfo } from "../lib/appsApi";
 
 const badge = "rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-fg-muted";
@@ -65,10 +66,10 @@ export default function ToolsPage() {
             <div className="min-w-0">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="font-medium">{tool.name}</h2>
-                <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-fg-muted">
+                <div className="inline-flex items-center gap-2 text-xs text-fg-muted">
                   <span>{tool.enabled ? "Enabled" : "Disabled"}</span>
-                  <input type="checkbox" className="size-5 accent-[var(--color-accent)]" checked={tool.enabled} disabled={!tool.trusted || update.isPending} onChange={(event) => update.mutate({ id: tool.id, enabled: event.target.checked })} />
-                </label>
+                  <Toggle label={`${tool.enabled ? "Disable" : "Enable"} ${tool.name}`} checked={tool.enabled} disabled={!tool.trusted || update.isPending} onCheckedChange={(enabled) => update.mutate({ id: tool.id, enabled })} />
+                </div>
               </div>
               <p className="mt-1 text-sm text-fg-muted">{tool.description}</p>
               <ToolBadges tool={tool} />
