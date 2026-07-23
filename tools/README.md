@@ -16,6 +16,7 @@ tools/
     testdb.py           # test helper: build a scratch DB from the real migrations
     vectorize.py        # deterministic feature-hash embeddings (memory/knowledge)
     secrets_scan.py     # credential-shaped content detector (memory/knowledge)
+    web_safety.py       # shared SSRF / unsafe-URL guard (web-fetch, web-http)
     test_paths.py
 ```
 
@@ -81,6 +82,30 @@ stdlib-only (sqlite3, json, uuid, datetime, hashlib) — no pip dependencies.
 The memory and knowledge tools share the credential guard in
 `_lib/secrets_scan.py`: content that looks like an API key, password, token,
 or private key is rejected with `sensitive_content_rejected` (no override).
+
+Other multi-tool folders:
+
+- `utilities` (risk: read) — deterministic unit conversion, timezone and
+  datetime parsing (IANA zones via zoneinfo), date differences, UUIDs, and
+  text/file hashing.
+- `fs-extensions` (risk: write, approval-gated) — stat with sha256,
+  hash-verified copy, a reversible trash store, binary range reads, and
+  zip-slip-guarded zip/tar.gz archives. The trash store is a JSON manifest +
+  blobs under the app data dir (`$AGENTGPT_DATA_DIR/trash/` else
+  `<repo>/app-data/trash/`) because migration 0011 has no `trash_records`
+  table and new migrations are out of scope — see the tool's module docstring.
+- `git-tools` (risk: write, no approval gate — documented in its manifest;
+  mutations are local/reversible and push is limited to --force-with-lease) —
+  structured status/diff/log/show, branching, staging/commit, fetch/pull/push,
+  merge/rebase/abort, and conflict resolution via the git CLI.
+- `web-http` (risk: read, outbound network) — `web_find` (search a fetched
+  URL or a knowledge source) and a general `http_request` verb client. Both
+  share the SSRF guard with `web-fetch` via `_lib/web_safety.py` (every
+  redirect hop re-validated; credentials in URLs refused).
+- `dev-tools` (risk: execute, approval-gated) — auto-detected test/lint/
+  format runners plus `inspect_build_errors` (structured rustc/pytest/tsc
+  diagnostics). Same sanitized-env execution pattern as `shell-execute`.
+
 
 The knowledge tool stores per-source metadata (tags, `content_sha256` for
 dedupe, and `embedding_version` for vector provenance) inside

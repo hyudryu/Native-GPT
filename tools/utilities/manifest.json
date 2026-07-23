@@ -1,0 +1,10 @@
+{
+  "id": "utilities",
+  "name": "Utilities",
+  "description": "Deterministic everyday utilities: unit conversion (length, mass, temperature, volume, data sizes, speed, area), timezone conversion and datetime parsing (IANA timezones via zoneinfo), date differences, UUID generation, and text/file hashing (sha256/sha512/sha1/md5). Pure computation; hash_file reads files under the allowed roots only.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "read",
+  "requires_approval": false
+}
