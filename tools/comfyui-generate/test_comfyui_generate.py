@@ -59,7 +59,7 @@ async def test_successful_generation_returns_asset(mod, monkeypatch):
 
 
 async def test_bridge_error_handled(mod, monkeypatch):
-    def raise_error(path, json=None, timeout=30.0):
+    async def raise_error(path, json=None, timeout=30.0):
         raise mod._bridge.BridgeClientError("bridge_unreachable", "connection refused")
 
     monkeypatch.setattr(mod._bridge, "api_post", raise_error)

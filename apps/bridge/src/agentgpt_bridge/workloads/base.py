@@ -117,10 +117,11 @@ class Workload(abc.ABC):
         """Stop the workload (kill the subprocess, release all VRAM)."""
 
     async def soft_idle(self) -> None:  # noqa: B027
-        """Release VRAM without stopping the process (if supported).
+        """Release VRAM while the process is alive (if supported).
 
-        Override in workloads that support in-process VRAM release (e.g.
-        ComfyUI's POST /free). The default implementation is a no-op.
+        Implementations without an in-process unload API may fully stop the
+        process here (e.g., OpenVoice tears down its worker subprocess). The
+        default implementation is a no-op.
         """
         # Base no-op: workloads without an unload API override this to call
         # stop() (e.g. OpenVoice tears down its worker process).

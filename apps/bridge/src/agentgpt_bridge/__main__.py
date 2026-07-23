@@ -25,8 +25,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Normalize log level once so both logging and uvicorn receive consistent casing.
+    log_level = args.log_level.strip().lower()
     logging.basicConfig(
-        level=args.log_level.upper(),
+        level=log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
@@ -54,7 +56,7 @@ def main() -> None:
         _create_app_factory(config),
         host=args.host,
         port=args.port,
-        log_level=args.log_level.lower(),
+        log_level=log_level,
     )
 
 

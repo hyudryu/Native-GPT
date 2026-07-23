@@ -82,6 +82,8 @@ class ComfyUIWorkload(Workload):
             self.state = WorkloadState.ERROR
             self.error_message = "ComfyUI did not become ready within 60s"
             logger.error(self.error_message)
+            # Clean up the spawned process to avoid a zombie.
+            await self.stop()
             return
 
         self.state = WorkloadState.READY

@@ -135,7 +135,7 @@ pub async fn create_host(
     if name.is_empty() || base_url.is_empty() {
         return Err(ApiError::bad_request("name and base_url are required"));
     }
-    let token = body.token.filter(|t| !t.is_empty());
+    let token = body.token.filter(|t| !t.trim().is_empty());
     let now = chrono::Utc::now().to_rfc3339();
     let row = RemoteHostRow {
         id: uuid::Uuid::now_v7().to_string(),
@@ -189,7 +189,7 @@ pub async fn patch_host(
         row.tls_verify = tls_verify;
     }
     match body.token {
-        Some(Some(tok)) if !tok.is_empty() => {
+        Some(Some(tok)) if !tok.trim().is_empty() => {
             state
                 .secrets
                 .set(&secret_key(&id), &tok)
@@ -216,10 +216,18 @@ pub async fn delete_host(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    // Collect asset paths before CASCADE deletes the rows.
+    let asset_paths = state.db.list_asset_paths_by_host(&id).await.unwrap_or_default();
     if !state.db.delete_remote_host(&id).await? {
         return Err(ApiError::not_found(format!("remote host {id} not found")));
     }
     let _ = state.secrets.delete(&secret_key(&id));
+    // Clean up orphaned asset files on disk (best-effort).
+    let dir = crate::assets::assets_dir(&state.repo_root);
+    for rel_path in &asset_paths {
+        let abs = dir.join(rel_path);
+        let _ = std::fs::remove_file(&abs);
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

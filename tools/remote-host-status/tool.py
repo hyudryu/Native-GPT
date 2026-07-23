@@ -79,11 +79,11 @@ async def check_status() -> dict[str, Any]:
     # Determine which capabilities are available.
     reachable = [h for h in hosts if h.get("status") == "reachable"]
     comfyui_ok = any(
-        h.get("workloads", {}).get("comfyui", {}).get("healthy")
+        (h.get("workloads") or {}).get("comfyui", {}).get("healthy")
         for h in reachable
     )
     openvoice_ok = any(
-        h.get("workloads", {}).get("openvoice", {}).get("healthy")
+        (h.get("workloads") or {}).get("openvoice", {}).get("healthy")
         for h in reachable
     )
 

@@ -9,35 +9,39 @@ Run via the bridge's workload manager::
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import sys
+
+import uvicorn
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="OpenVoice worker for AgentGPT bridge")
     parser.add_argument("--port", type=int, default=8200)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--checkpoints", required=False, default="/opt/OpenVoice/checkpoints_v2")
-    parser.add_argument("--voices-dir", required=False, default="/var/lib/agentgpt/voices")
+    parser.add_argument("--checkpoints", default="/opt/OpenVoice/checkpoints_v2")
+    parser.add_argument("--voices-dir", default="/var/lib/agentgpt/voices")
     parser.add_argument("--log-level", default="info")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=args.log_level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    log_level = args.log_level.strip().lower()
+    try:
+        logging.basicConfig(
+            level=log_level.upper(),
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            stream=sys.stderr,
+        )
+    except ValueError:
+        print(f"Invalid log level: {args.log_level}", file=sys.stderr)
+        sys.exit(1)
 
     from . import _init_paths
 
     _init_paths(args.checkpoints, args.voices_dir)
 
-    import importlib
-
-    import uvicorn
-
     mod = importlib.import_module("openvoice_worker")
-    uvicorn.run(mod.app, host=args.host, port=args.port, log_level=args.log_level.lower())
+    uvicorn.run(mod.app, host=args.host, port=args.port, log_level=log_level)
 
 
 if __name__ == "__main__":

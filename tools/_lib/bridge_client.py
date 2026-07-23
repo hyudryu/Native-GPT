@@ -46,7 +46,9 @@ def _auth_headers() -> dict[str, str]:
 async def api_get(path: str, timeout: float = DEFAULT_TIMEOUT) -> Any:
     """GET a JSON endpoint on the desktop server."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(f"{_server_url()}{path}", headers=_auth_headers())
+        resp = await client.get(
+            f"{_server_url()}{path}", headers=_auth_headers(), timeout=timeout
+        )
     return _handle(resp)
 
 
@@ -80,7 +82,7 @@ def _handle(resp: httpx.Response) -> Any:
         return None
     try:
         body = resp.json()
-    except Exception:
+    except (ValueError, httpx.DecodingError):
         if not resp.status_code < 400:
             raise BridgeClientError(
                 f"http_{resp.status_code}",

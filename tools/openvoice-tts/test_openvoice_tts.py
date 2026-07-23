@@ -51,7 +51,7 @@ async def test_successful_synthesis_returns_asset(mod, monkeypatch):
 
 
 async def test_bridge_error_handled(mod, monkeypatch):
-    def raise_error(path, json=None, timeout=30.0):
+    async def raise_error(path, json=None, timeout=30.0):
         raise mod._bridge.BridgeClientError("workload_unavailable", "openvoice not started")
 
     monkeypatch.setattr(mod._bridge, "api_post", raise_error)

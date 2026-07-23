@@ -7,6 +7,7 @@ a valid ``Authorization: Bearer <token>`` header matching the bridge token.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import os
 
 from fastapi import Header, HTTPException, Request, status
@@ -21,8 +22,10 @@ def is_loopback(request: Request) -> bool:
     client = request.client
     if client is None:
         return False
-    host = client.host
-    return host in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1")
+    try:
+        return ipaddress.ip_address(client.host).is_loopback
+    except ValueError:
+        return False
 
 
 def token_matches(provided: str | None, expected: str) -> bool:
@@ -44,7 +47,9 @@ async def verify_auth(
     # Loopback always passes (mirrors auth.rs).
     if is_loopback(request):
         return
-    if request.url.path in EXEMPT_PATHS:
+    # Normalize: strip trailing slash so /health/ matches /health etc.
+    path = request.url.path.rstrip("/") or "/"
+    if path in EXEMPT_PATHS:
         return
     provided = None
     if authorization:

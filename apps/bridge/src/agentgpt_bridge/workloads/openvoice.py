@@ -143,18 +143,27 @@ class OpenVoiceWorkload(Workload):
 
     async def submit_job(self, job: dict[str, Any]) -> JobResult:
         """Submit a TTS job to the OpenVoice worker."""
-        self.ensure_ready()
         if self.state == WorkloadState.STOPPED:
             await self.start()
+        self.ensure_ready()
         self.state = WorkloadState.BUSY
         self.touch()
         job_id = str(uuid.uuid4())
 
         try:
             text = job.get("text", "")
+            if not text or not text.strip():
+                self.state = WorkloadState.READY
+                return JobResult(
+                    job_id=str(uuid.uuid4()),
+                    status=JobStatus.FAILED,
+                    error="text is required and must not be empty",
+                    summary="OpenVoice job requires non-empty text",
+                )
             voice_id = job.get("voice_id")
             accent = job.get("accent", "en-us")
-            speed = job.get("speed", 1.0)
+            # Clamp speed to a safe range to avoid downstream issues.
+            speed = max(0.1, min(float(job.get("speed", 1.0)), 5.0))
 
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
@@ -200,14 +209,20 @@ class OpenVoiceWorkload(Workload):
         """Upload a reference clip to the worker for speaker embedding extraction."""
         if self.state == WorkloadState.STOPPED:
             await self.start()
+        self.ensure_ready()
         self.touch()
-        async with httpx.AsyncClient(timeout=60) as client:
-            files = {"clip": (filename, clip_bytes, mime_type)}
-            data = {"name": name}
-            resp = await client.post(
-                f"{self.base_url}/register_voice",
-                files=files,
-                data=data,
-            )
-            resp.raise_for_status()
-            return resp.json()
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                files = {"clip": (filename, clip_bytes, mime_type)}
+                data = {"name": name}
+                resp = await client.post(
+                    f"{self.base_url}/register_voice",
+                    files=files,
+                    data=data,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:
+            logger.exception("register_voice for '%s' failed", name)
+            return {"error": str(exc)}

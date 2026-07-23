@@ -54,6 +54,13 @@ async def register_voice(
             "data": {},
             "error": {"code": "bad_request", "message": "name must not be empty"},
         }
+    if not file_path or not file_path.strip():
+        return {
+            "ok": False,
+            "summary": "File path is required",
+            "data": {},
+            "error": {"code": "bad_request", "message": "file_path must not be empty"},
+        }
     try:
         resolved = _paths.resolve_under_root(file_path)
     except PathEscapeError as exc:
@@ -106,18 +113,28 @@ async def register_voice(
     mime_type = mimetypes.guess_type(str(resolved))[0] or "audio/mpeg"
     filename = resolved.name
 
-    # Resolve the host id.
+    # Fetch hosts once and resolve the target host_id.
+    try:
+        host_data = await _bridge.api_get("/api/remote-hosts")
+    except _bridge.BridgeClientError as exc:
+        return {
+            "ok": False,
+            "summary": f"Could not reach server: {exc.message}",
+            "data": {},
+            "error": {"code": exc.code, "message": exc.message},
+        }
+    hosts = host_data.get("hosts", [])
+    if not hosts:
+        return {
+            "ok": False,
+            "summary": "No remote hosts configured",
+            "data": {},
+            "error": {
+                "code": "no_remote_host",
+                "message": "No remote host is configured. Add one in Settings → Remote Hosts.",
+            },
+        }
     if host:
-        try:
-            host_data = await _bridge.api_get("/api/remote-hosts")
-        except _bridge.BridgeClientError as exc:
-            return {
-                "ok": False,
-                "summary": f"Could not resolve host: {exc.message}",
-                "data": {},
-                "error": {"code": exc.code, "message": exc.message},
-            }
-        hosts = host_data.get("hosts", [])
         matched = next((h for h in hosts if h["name"] == host or h["id"] == host), None)
         if not matched:
             return {
@@ -128,27 +145,6 @@ async def register_voice(
             }
         host_id = matched["id"]
     else:
-        # Use the default reachable host.
-        try:
-            host_data = await _bridge.api_get("/api/remote-hosts")
-        except _bridge.BridgeClientError as exc:
-            return {
-                "ok": False,
-                "summary": f"Could not reach server: {exc.message}",
-                "data": {},
-                "error": {"code": exc.code, "message": exc.message},
-            }
-        hosts = host_data.get("hosts", [])
-        if not hosts:
-            return {
-                "ok": False,
-                "summary": "No remote hosts configured",
-                "data": {},
-                "error": {
-                    "code": "no_remote_host",
-                    "message": "No remote host is configured. Add one in Settings → Remote Hosts.",
-                },
-            }
         reachable = next((h for h in hosts if h.get("status") == "reachable"), hosts[0])
         host_id = reachable["id"]
 

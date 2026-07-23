@@ -179,9 +179,14 @@ impl BridgeClient {
             let body = resp.bytes().await.unwrap_or_default();
             return Err(BridgeError::status(status, &body));
         }
-        let detected_mime = mime_type
-            .map(|m| m.to_string())
-            .or_else(|| resp.headers().get("content-type").map(|v| v.to_str().unwrap_or("").to_string()));
+        // Prefer the server's actual Content-Type header; fall back to the
+        // caller-provided hint only if the header is missing.
+        let detected_mime = resp
+            .headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap_or("").to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| mime_type.map(|m| m.to_string()));
         let body = resp.bytes().await.map_err(BridgeError::transport)?;
         Ok((body.to_vec(), detected_mime))
     }

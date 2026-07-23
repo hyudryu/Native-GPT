@@ -10,6 +10,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
@@ -147,14 +148,13 @@ def _register_routes(app: FastAPI, manager: WorkloadManager) -> None:
         if wl is None or not isinstance(wl, OpenVoiceWorkload):
             return {"voices": []}
         # The worker owns the voice registry; proxy its list.
-        import httpx
-
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(f"{wl.base_url}/voices")
                 resp.raise_for_status()
                 return resp.json()
         except Exception as exc:
+            logger.warning("failed to list voices from openvoice worker: %s", exc)
             return {"voices": [], "warning": str(exc)}
 
     @app.post("/workloads/openvoice/voices")
@@ -180,11 +180,10 @@ def _register_routes(app: FastAPI, manager: WorkloadManager) -> None:
     async def delete_voice(voice_id: str) -> dict[str, Any]:
         wl = manager.get("openvoice")
         if wl is not None and isinstance(wl, OpenVoiceWorkload):
-            import httpx
-
             try:
                 async with httpx.AsyncClient(timeout=15) as client:
                     await client.delete(f"{wl.base_url}/voices/{voice_id}")
-            except Exception:
-                pass  # best-effort
+            except Exception as exc:
+                # Best-effort: the voice may already be gone on the worker.
+                logger.warning("failed to delete voice %s on worker: %s", voice_id, exc)
         return {"deleted": voice_id}

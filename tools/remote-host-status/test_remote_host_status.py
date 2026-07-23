@@ -70,7 +70,7 @@ async def test_lists_hosts_and_capabilities(mod, monkeypatch):
 async def test_server_error_returns_error(mod, monkeypatch):
     """When the server is unreachable, return an error result."""
 
-    def raise_error(path, timeout=30.0):
+    async def raise_error(path, timeout=30.0):
         raise mod._bridge.BridgeClientError("http_503", "server unavailable", 503)
 
     monkeypatch.setattr(mod._bridge, "api_get", raise_error)

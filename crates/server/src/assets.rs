@@ -40,6 +40,15 @@ pub fn write_asset_bytes(
     mime_type: Option<&str>,
 ) -> Result<(String, PathBuf), std::io::Error> {
     std::fs::create_dir_all(dir)?;
+    // Reject asset_ids that contain path separators or traversal sequences.
+    // Current callers generate UUIDs, but this prevents directory escape if a
+    // future caller passes user-supplied input.
+    if asset_id.contains('/') || asset_id.contains('\\') || asset_id.contains("..") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "asset_id contains invalid characters",
+        ));
+    }
     let ext = mime_type
         .and_then(mime_to_ext)
         .unwrap_or_else(|| "bin");
@@ -78,7 +87,18 @@ pub async fn serve_asset(
         .ok_or_else(|| ApiError::not_found(format!("asset {id} not found")))?;
 
     let dir = assets_dir(&state.repo_root);
-    let path = dir.join(&row.storage_path);
+    // Defense-in-depth: reject storage_path values that could escape the assets
+    // directory (absolute paths or parent-dir traversal). Current callers only
+    // write UUID filenames, but the DB column accepts arbitrary strings.
+    let storage_path = std::path::PathBuf::from(&row.storage_path);
+    if storage_path.is_absolute()
+        || storage_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::not_found(format!("asset {id} not found")));
+    }
+    let path = dir.join(&storage_path);
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|e| ApiError::internal(format!("failed to read asset {id}: {e}")))?;

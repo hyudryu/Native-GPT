@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
@@ -83,9 +84,6 @@ async def synthesize(
 ) -> Response:
     """Synthesize speech. If voice_id is provided, clone that voice."""
     _ensure_loaded()
-    import io as _io
-
-    import soundfile as sf
 
     # Generate base TTS audio.
     base_name = f"tts_{uuid.uuid4()}.wav"
@@ -99,7 +97,10 @@ async def synthesize(
         if se_path.exists():
             converted_path = output_path.with_suffix(".conv.wav")
             if _voices_dir:
-                src_se = _voices_dir / "tmp" / "default_se.pth"
+                # Ensure the tmp dir exists for the default speaker embedding.
+                tmp_dir = _voices_dir / "tmp"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                src_se = tmp_dir / "default_se.pth"
             else:
                 src_se = Path("default_se.pth")
             # The source speaker embedding is typically the default/base speaker.
@@ -111,11 +112,8 @@ async def synthesize(
             )
             output_path = converted_path
 
-    audio_bytes, sr = sf.read(str(output_path))
-    # Encode to WAV bytes.
-    buffer = _io.BytesIO()
-    sf.write(buffer, audio_bytes, sr, format="WAV")
-    wav_bytes = buffer.getvalue()
+    # Read the raw WAV bytes directly — OpenVoice already writes WAV format.
+    wav_bytes = output_path.read_bytes()
 
     # Cleanup temp files.
     try:
@@ -153,7 +151,7 @@ async def register_voice(
         "name": name,
         "se_path": str(se_path),
         "ref_clip": str(ref_path),
-        "created_at": str(uuid.uuid1()),  # rough timestamp
+        "created_at": datetime.now(UTC).isoformat(),
     }
     return {"voice_id": voice_id, "name": name}
 

@@ -29,6 +29,7 @@ class FakeWorkload(Workload):
 
     async def start(self) -> None:
         self.start_call_count += 1
+        self.jobs_submitted = []
         self.state = WorkloadState.STARTING
         # Simulate near-instant startup.
         self.state = WorkloadState.READY
@@ -63,7 +64,7 @@ class FakeWorkload(Workload):
     def _fake_outputs(self, job: dict[str, Any]) -> list[dict[str, Any]]:
         kind = job.get("output_kind") or job.get("kind") or "image"
         # For TTS, produce audio; for image gen, produce an image.
-        if job.get("text"):
+        if job.get("text") is not None:
             # Looks like a TTS job.
             return [
                 {

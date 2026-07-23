@@ -53,11 +53,15 @@ class WorkloadManager:
     # ---- lifecycle ----
 
     async def ensure_started(self, workload_id: str) -> Workload:
-        """Ensure a workload is started (start if stopped)."""
+        """Ensure a workload is started (start if stopped, wait if starting)."""
         wl = self._require(workload_id)
         if wl.state == WorkloadState.STOPPED:
             logger.info("starting workload %s on demand", workload_id)
             await wl.start()
+        elif wl.state == WorkloadState.STARTING:
+            logger.info("waiting for workload %s to become ready", workload_id)
+            while wl.state == WorkloadState.STARTING and self._running:
+                await asyncio.sleep(0.1)
         return wl
 
     async def stop(self, workload_id: str) -> None:
@@ -131,7 +135,7 @@ class WorkloadManager:
         elif idle >= wl.soft_idle_seconds:
             logger.info("soft idle: releasing VRAM for %s (%.0fs idle)", wl.workload_id, idle)
             await wl.soft_idle()
-            wl.last_used = time.monotonic()  # reset so soft idle doesn't immediately re-fire
+            wl.touch()  # reset so soft idle doesn't immediately re-fire
 
     # ---- shutdown ----
 

@@ -768,6 +768,24 @@ impl Db {
         .await
     }
 
+    /// List asset storage paths for a host (for file cleanup on host delete).
+    pub async fn list_asset_paths_by_host(
+        &self,
+        host_id: &str,
+    ) -> Result<Vec<String>, DbError> {
+        let host_id = host_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT storage_path FROM generated_assets WHERE host_id = ?",
+            )?;
+            let rows = stmt
+                .query_map(params![host_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
     // ---- voices ----
 
     pub async fn insert_voice(&self, voice: &VoiceRow) -> Result<(), DbError> {
