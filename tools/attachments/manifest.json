@@ -1,0 +1,10 @@
+{
+  "id": "attachments",
+  "name": "Attachments",
+  "description": "Conversation attachments built on the artifact store: attach files or existing artifacts to a conversation, list/inspect them, read text attachments with page/offset windows, keyword-search their content with match context, and rename or detach them. Binary formats (PDF/DOCX/XLSX/images) are stored and listed but not parsed yet.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

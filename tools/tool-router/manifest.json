@@ -1,0 +1,10 @@
+{
+  "id": "tool-router",
+  "name": "Tool Router",
+  "description": "Dynamic tool discovery and access management: search available tools by capability with risk and enablement filters, inspect manifests, load Strands tool schemas on demand, list enabled tools, and manage tool_grants records (user/profile/project/conversation scopes). MCP server search is metadata-only via mcp_servers.json.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "read",
+  "requires_approval": false
+}

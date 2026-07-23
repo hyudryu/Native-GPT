@@ -76,7 +76,10 @@ via `_lib/db.py`, which mirrors the host's path resolution
 (`AGENTGPT_DATA_DIR`, else `<repo>/app-data/database/agentgpt.sqlite3`) and
 pragmas (WAL, busy timeout, foreign keys). Their tables come from migration
 `0011_agent_intelligence` (plus the pre-existing `knowledge_sources` /
-`knowledge_chunks` from 0003/0005 for the knowledge tool). Tools stay
+`knowledge_chunks` from 0003/0005 for the knowledge tool). The `artifacts`,
+`attachments`, `notifications`, `skills`, and `tool-router` tools also live
+on 0011 tables (`artifacts`, `attachments`, `notifications`, `skills` +
+`skill_settings`, `tool_grants`) plus `tool_settings` from 0003. Tools stay
 stdlib-only (sqlite3, json, uuid, datetime, hashlib) — no pip dependencies.
 
 The memory and knowledge tools share the credential guard in
@@ -105,6 +108,34 @@ Other multi-tool folders:
 - `dev-tools` (risk: execute, approval-gated) — auto-detected test/lint/
   format runners plus `inspect_build_errors` (structured rustc/pytest/tsc
   diagnostics). Same sanitized-env execution pattern as `shell-execute`.
+- `artifacts` (risk: write) — durable artifact store: content-addressed blobs
+  under `$AGENTGPT_DATA_DIR/artifacts/` (else `<repo>/app-data/artifacts/`),
+  metadata in the host's `artifacts` table (0011). Windowed text reads, 1 MB
+  capped base64 binary ranges, previews, keyset listing, soft delete (blobs
+  retained). The goal-supervisor's `artifact_exists` validator reads these
+  rows. render/download variants are planned (need UI/renderers).
+- `attachments` (risk: write) — conversation attachments built on the
+  artifact store: attach files or existing artifacts, read text attachments
+  by 200-line page or character window, bounded keyword search with match
+  context, rename/detach. PDF/DOCX/XLSX/images are stored and listed but
+  content access returns a clear unsupported error (parser stage planned).
+- `notifications` (risk: read) — persistent user notifications in the host's
+  `notifications` table (0011): send with urgency, list unread/all
+  (dismissed excluded), mark read, dismiss. Delivery is via the table — the
+  host UI surfaces rows; the tools never push.
+- `skills` (risk: read) — instructional skills registry over `<repo>/skills/`
+  folders (`skill.json` manifest + `SKILL.md` prompt; `$AGENTGPT_SKILLS_ROOT`
+  overrides the root): list/get/search, scoped enable/disable via
+  `skill_settings`, validation, install/uninstall (built-in publisher
+  "Native GPT" skills are uninstall-protected), dependency resolution.
+  Built-ins: `critical-thinking`, `plan-execute-verify`.
+- `tool-router` (risk: read) — dynamic tool discovery: token-match search
+  over `tools/*/manifest.json` with risk (read<write<execute) and enabled
+  filters (`tool_settings` join + manifest defaults), manifest details,
+  on-demand Strands schema loading (trusted built-ins; same import mechanism
+  as the runtime registry), enabled-tool listing, and `tool_grants` record
+  management (enforcement is host-layer, planned). MCP search is
+  metadata-only via `mcp_servers.json`.
 
 
 The knowledge tool stores per-source metadata (tags, `content_sha256` for
