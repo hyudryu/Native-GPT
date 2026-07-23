@@ -23,6 +23,7 @@ mod defaults;
 mod endpoints;
 mod handlers;
 mod knowledge;
+mod mcp_servers;
 mod phase3;
 mod tools;
 mod updates;
@@ -192,17 +193,6 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         }
     }
 
-    // Expose the server's port + token to the agent-runtime sidecar so its
-    // tools (comfyui_generate, openvoice_tts, etc.) can call back to this
-    // server's REST API. Child processes inherit these env vars automatically.
-    // SAFETY: single-threaded startup before any other thread reads env.
-    // The token is the same one used for HTTP auth (ADR-0003); loopback calls
-    // are exempt, but tools send it anyway for correctness in non-loopback deployments.
-    unsafe {
-        std::env::set_var("AGENTGPT_SERVER_PORT", port.to_string());
-        std::env::set_var("AGENTGPT_SERVER_TOKEN", &token);
-    }
-
     let supervisor = Supervisor::new(SupervisorConfig::from_env(
         repo_root.clone(),
         config.idle_timeout,
@@ -234,6 +224,24 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         secrets: Arc::new(agentgpt_secure_store::SecureStore::new("agentgpt")),
         host_events: tokio::sync::broadcast::channel(state::HOST_EVENTS_CAPACITY).0,
     });
+
+    // Generate app-data/mcp_servers.json from the remote_hosts table so the
+    // agent-runtime sidecar can connect to each configured bridge as an MCP
+    // client (streamable-http). Regenerated on every remote-hosts mutation.
+    // A failure here must not prevent startup — the runtime tolerates a
+    // missing config file (it just gets no MCP tools).
+    let mcp_servers_path = mcp_servers::servers_path(&repo_root);
+    match mcp_servers::regenerate(&state).await {
+        Ok(path) => info!(path = %path.display(), "mcp servers config written"),
+        Err(e) => warn!("failed to write mcp servers config: {e}"),
+    }
+    // Point the sidecar at the generated config. The supervisor spawns the
+    // sidecar lazily, and child processes inherit this process's environment.
+    // SAFETY: set during single-threaded startup, before the sidecar (or any
+    // other thread) can spawn.
+    unsafe {
+        std::env::set_var("AGENTGPT_MCP_SERVERS", &mcp_servers_path);
+    }
 
     let local_url = format!("http://127.0.0.1:{port}");
     let tailscale_urls: Vec<String> = tailscale_ips
@@ -355,12 +363,8 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/api/remote-hosts/{id}/test", post(remote_hosts::test_host))
         .route(
-            "/api/remote-hosts/generate",
-            post(remote_hosts::generate_comfyui),
-        )
-        .route(
-            "/api/remote-hosts/tts",
-            post(remote_hosts::generate_openvoice),
+            "/api/remote-hosts/{host_id}/assets/{token}",
+            get(remote_hosts::proxy_asset),
         )
         .route(
             "/api/remote-hosts/{host_id}/voices",

@@ -4,18 +4,21 @@
 //! `has_token` lives in the row; the raw bearer token is stored in the
 //! keychain under key `host:<id>` and resolved only when relaying to the
 //! bridge. It never appears in responses or logs. See ADR-0008.
-//
-// A few job-submission handlers below are not yet registered as routes; allow
-// dead code until they're wired up so `-D warnings` CI stays green.
-#![allow(dead_code)]
+//!
+//! Generation/TTS job endpoints were removed when the bridge became an MCP
+//! server (see `docs/superpowers/specs/2026-07-22-bridge-mcp-server-design.md`):
+//! the agent now calls bridge tools directly via MCP. What remains here is
+//! host CRUD + test-connection, the voices passthrough, and a same-origin
+//! asset proxy so the webview can render bearer-protected bridge asset URLs.
 
 use axum::body::Bytes;
 use axum::extract::{Multipart, Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::bridge::{BridgeClient, HealthProbe};
 use crate::db::{RemoteHostRow, VoiceRow};
@@ -89,6 +92,15 @@ pub fn client_for_host(
 ) -> Result<BridgeClient, ApiError> {
     let token = resolve_token(state, host);
     BridgeClient::new(&host.base_url, token, host.tls_verify)
+}
+
+/// Rebuild `app-data/mcp_servers.json` after a remote-hosts mutation so the
+/// agent-runtime's MCP client config stays in sync. Best-effort: a write
+/// failure is logged but never fails the API request.
+async fn sync_mcp_servers_config(state: &SharedState) {
+    if let Err(e) = crate::mcp_servers::regenerate(state).await {
+        tracing::warn!("failed to regenerate mcp_servers.json: {e}");
+    }
 }
 
 fn row_json(row: &RemoteHostRow) -> Value {
@@ -170,6 +182,7 @@ pub async fn create_host(
         }
         return Err(e.into());
     }
+    sync_mcp_servers_config(&state).await;
     Ok((StatusCode::CREATED, Json(json!({ "host": row_json(&row) }))))
 }
 
@@ -217,6 +230,7 @@ pub async fn patch_host(
     }
     row.updated_at = chrono::Utc::now().to_rfc3339();
     state.db.update_remote_host(&row).await?;
+    sync_mcp_servers_config(&state).await;
     Ok(Json(json!({ "host": row_json(&row) })))
 }
 
@@ -241,6 +255,7 @@ pub async fn delete_host(
         let abs = dir.join(rel_path);
         let _ = std::fs::remove_file(&abs);
     }
+    sync_mcp_servers_config(&state).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -390,271 +405,32 @@ pub async fn delete_voice(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Resolve a default host: the first reachable host, or the first host if none
-/// are reachable. Used by agent tools when no host is named.
-pub async fn resolve_default_host(state: &SharedState) -> Option<RemoteHostRow> {
-    let hosts = state.db.list_remote_hosts().await.ok()?;
-    hosts
-        .iter()
-        .find(|h| h.status.as_deref() == Some("reachable"))
-        .cloned()
-        .or_else(|| hosts.first().cloned())
-}
-
-/// Resolve a host by name (exact match) or id.
-pub async fn resolve_host_by_name(state: &SharedState, name_or_id: &str) -> Option<RemoteHostRow> {
-    let hosts = state.db.list_remote_hosts().await.ok()?;
-    hosts
-        .iter()
-        .find(|h| h.id == name_or_id || h.name == name_or_id)
-        .cloned()
-}
-
-/// Build a client for a named or default host. Used by agent tools.
-pub async fn client_for_named_or_default(
-    state: &SharedState,
-    host: Option<&str>,
-) -> Result<(RemoteHostRow, BridgeClient), ApiError> {
-    let row = match host {
-        Some(name) => resolve_host_by_name(state, name)
-            .await
-            .ok_or_else(|| ApiError::not_found(format!("remote host '{name}' not found")))?,
-        None => resolve_default_host(state)
-            .await
-            .ok_or_else(|| ApiError::bad_request("no remote host is configured"))?,
-    };
-    let client = client_for_host(state, &row)?;
-    Ok((row, client))
-}
-
-/// Submit a ComfyUI job and return the raw bridge response.
-pub async fn submit_comfyui_job(
-    state: &SharedState,
-    host: Option<&str>,
-    prompt: &str,
-    kind: &str,
-    model: Option<&str>,
-    size: Option<&str>,
-) -> Result<Value, ApiError> {
-    let (row, client) = client_for_named_or_default(state, host).await?;
-    let body = crate::bridge::comfyui_job_body(prompt, kind, model, size);
-    let result = client
-        .submit_job("comfyui", &body, Duration::from_secs(120))
-        .await?;
-    let _ = row; // host resolved
-    Ok(result)
-}
-
-/// Submit an OpenVoice job and return the raw bridge response.
-pub async fn submit_openvoice_job(
-    state: &SharedState,
-    host: Option<&str>,
-    text: &str,
-    voice_id: Option<&str>,
-    accent: Option<&str>,
-    speed: Option<f64>,
-) -> Result<Value, ApiError> {
-    let (row, client) = client_for_named_or_default(state, host).await?;
-    let body = crate::bridge::openvoice_job_body(text, voice_id, accent, speed);
-    let result = client
-        .submit_job("openvoice", &body, Duration::from_secs(60))
-        .await?;
-    let _ = row;
-    Ok(result)
-}
-
-// ---- generation endpoints (called by agent tools) ----
-
-#[derive(Debug, Deserialize)]
-pub struct ComfyuiGenerateRequest {
-    #[serde(default)]
-    pub host: Option<String>,
-    pub prompt: String,
-    #[serde(default = "default_kind")]
-    pub kind: String,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub size: Option<String>,
-}
-
-fn default_kind() -> String {
-    "image".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OpenvoiceTtsRequest {
-    #[serde(default)]
-    pub host: Option<String>,
-    pub text: String,
-    #[serde(default)]
-    pub voice_id: Option<String>,
-    #[serde(default)]
-    pub accent: Option<String>,
-    #[serde(default)]
-    pub speed: Option<f64>,
-}
-
-/// `POST /api/remote-hosts/generate` — submit a ComfyUI generation job.
-/// Resolves the host (named or default), submits to the bridge, fetches the
-/// resulting bytes, stores a `generated_assets` row, and returns the asset_id.
-pub async fn generate_comfyui(
+/// `GET /api/remote-hosts/{host_id}/assets/{token}` — proxy a bridge asset
+/// through the desktop server.
+///
+/// MCP generation tools return bridge-direct asset URLs
+/// (`https://<host>:8443/assets/<token>`) that the webview cannot load: the
+/// bridge requires a bearer token and may present a self-signed certificate.
+/// The UI rewrites those URLs to this same-origin route; we fetch the bytes
+/// server-side with the host's keychain token and TLS policy, and stream them
+/// back with the bridge's Content-Type.
+pub async fn proxy_asset(
     State(state): State<SharedState>,
-    Json(body): Json<ComfyuiGenerateRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let host = body.host.as_deref();
-    let (row, client) = client_for_named_or_default(&state, host).await?;
-
-    let bridge_body = crate::bridge::comfyui_job_body(
-        &body.prompt,
-        &body.kind,
-        body.model.as_deref(),
-        body.size.as_deref(),
-    );
-    let result = client
-        .submit_job("comfyui", &bridge_body, Duration::from_secs(120))
-        .await?;
-
-    let asset_id = store_job_outputs(
-        &state,
-        &row.id,
-        "comfyui",
-        &body.prompt,
-        result.get("job_id").and_then(|v| v.as_str()),
-        &client,
-        result.get("outputs"),
+    Path((host_id, token)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let row = load_host(&state, &host_id).await?;
+    let client = client_for_host(&state, &row)?;
+    let (bytes, detected_mime) = client
+        .fetch_asset_bytes(&token, None)
+        .await
+        .map_err(|e| e.into_api())?;
+    let content_type = detected_mime.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, content_type)],
+        bytes,
     )
-    .await?;
-
-    Ok(Json(json!({
-        "ok": true,
-        "asset_id": asset_id,
-        "asset_url": format!("/api/assets/{}", asset_id),
-        "host": row.name,
-        "summary": result.get("summary").and_then(|v| v.as_str())
-            .unwrap_or("generation completed"),
-    })))
-}
-
-/// `POST /api/remote-hosts/tts` — submit an OpenVoice TTS job.
-pub async fn generate_openvoice(
-    State(state): State<SharedState>,
-    Json(body): Json<OpenvoiceTtsRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let host = body.host.as_deref();
-    let (row, client) = client_for_named_or_default(&state, host).await?;
-
-    let bridge_body = crate::bridge::openvoice_job_body(
-        &body.text,
-        body.voice_id.as_deref(),
-        body.accent.as_deref(),
-        body.speed,
-    );
-    let result = client
-        .submit_job("openvoice", &bridge_body, Duration::from_secs(60))
-        .await?;
-
-    let asset_id = store_job_outputs(
-        &state,
-        &row.id,
-        "openvoice",
-        &body.text,
-        result.get("job_id").and_then(|v| v.as_str()),
-        &client,
-        result.get("outputs"),
-    )
-    .await?;
-
-    // If a voice_id was used, touch its last_used_at.
-    if let Some(voice_id) = &body.voice_id {
-        let _ = state
-            .db
-            .touch_voice(voice_id, &chrono::Utc::now().to_rfc3339())
-            .await;
-    }
-
-    Ok(Json(json!({
-        "ok": true,
-        "asset_id": asset_id,
-        "asset_url": format!("/api/assets/{}", asset_id),
-        "host": row.name,
-        "summary": result.get("summary").and_then(|v| v.as_str())
-            .unwrap_or("TTS completed"),
-    })))
-}
-
-/// Fetch output bytes from the bridge and store them as generated_assets.
-/// Returns the first asset's id (there is typically one output per job).
-async fn store_job_outputs(
-    state: &SharedState,
-    host_id: &str,
-    workload: &str,
-    prompt_text: &str,
-    source_ref: Option<&str>,
-    client: &BridgeClient,
-    outputs: Option<&Value>,
-) -> Result<String, ApiError> {
-    let outputs = outputs.unwrap_or(&Value::Null);
-    let outputs_arr = outputs.as_array().ok_or_else(|| {
-        ApiError::bad_gateway("bad_bridge_response", "bridge returned no outputs array")
-    })?;
-
-    let dir = crate::assets::assets_dir(&state.repo_root);
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut first_asset_id: Option<String> = None;
-
-    for output in outputs_arr {
-        let asset_token = output
-            .get("asset_token")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ApiError::bad_gateway("bad_bridge_response", "output missing asset_token")
-            })?;
-        let kind = output
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("image");
-        let mime_type = output
-            .get("mime_type")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let (bytes, detected_mime) = client
-            .fetch_asset_bytes(asset_token, mime_type.as_deref())
-            .await
-            .map_err(|e| e.into_api())?;
-
-        let asset_id = uuid::Uuid::now_v7().to_string();
-        let (storage_path, _abs) = crate::assets::write_asset_bytes(
-            &dir,
-            &asset_id,
-            &bytes,
-            detected_mime.as_deref().or(mime_type.as_deref()),
-        )
-        .map_err(|e| ApiError::internal(format!("failed to write asset: {e}")))?;
-
-        let row = crate::db::GeneratedAssetRow {
-            id: asset_id.clone(),
-            host_id: host_id.to_string(),
-            workload: workload.to_string(),
-            kind: kind.to_string(),
-            message_id: None,
-            prompt_text: Some(prompt_text.to_string()),
-            source_ref: source_ref.map(String::from),
-            storage_path,
-            bytes: Some(bytes.len() as i64),
-            mime_type: detected_mime.or(mime_type),
-            created_at: now.clone(),
-        };
-        state.db.insert_asset(&row).await?;
-
-        if first_asset_id.is_none() {
-            first_asset_id = Some(asset_id);
-        }
-    }
-
-    first_asset_id
-        .ok_or_else(|| ApiError::bad_gateway("bad_bridge_response", "no outputs produced"))
+        .into_response())
 }
 
 #[cfg(test)]
@@ -839,5 +615,60 @@ mod tests {
     #[test]
     fn secret_key_is_prefixed() {
         assert_eq!(secret_key("abc"), "host:abc");
+    }
+
+    #[tokio::test]
+    async fn proxy_asset_unknown_host_is_404() {
+        let rig = rig();
+        let res = rig
+            .app
+            .clone()
+            .oneshot(request(
+                "GET",
+                "/api/remote-hosts/nope/assets/some-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let (status, value) = json_response(res).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(value["error"]["code"], json!("not_found"));
+    }
+
+    #[tokio::test]
+    async fn create_host_regenerates_mcp_servers_config() {
+        let rig = rig();
+        let host = create_host(&rig, Some("bridge-tok")).await;
+        let id = host["id"].as_str().unwrap();
+        let shortid: String = id.chars().take(8).collect();
+
+        let path = crate::mcp_servers::servers_path(&rig.test_state.state.repo_root);
+        let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = &doc["mcpServers"][format!("agentgpt-bridge-{shortid}")];
+        assert_eq!(entry["url"], json!("http://127.0.0.1:8443/mcp"));
+        assert_eq!(entry["transport"], json!("streamable-http"));
+        assert_eq!(
+            entry["headers"]["Authorization"],
+            json!("Bearer bridge-tok")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_host_regenerates_mcp_servers_config() {
+        let rig = rig();
+        let host = create_host(&rig, Some("bridge-tok")).await;
+        let id = host["id"].as_str().unwrap();
+
+        let res = rig
+            .app
+            .clone()
+            .oneshot(request("DELETE", &format!("/api/remote-hosts/{id}"), None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+        let path = crate::mcp_servers::servers_path(&rig.test_state.state.repo_root);
+        let doc: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(doc["mcpServers"], json!({}));
     }
 }

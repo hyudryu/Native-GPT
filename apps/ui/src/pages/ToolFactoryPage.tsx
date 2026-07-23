@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import AppPage, { field, panel, primaryButton, secondaryButton } from "../features/apps/AppPage";
+import Toggle from "../components/Toggle";
 import { socket } from "../lib/ws";
 import {
   useCreateTool,
@@ -238,14 +239,14 @@ export default function ToolFactoryPage() {
               Timeout (s)
               <input type="number" className={`${field} mt-1`} value={manifest.timeout_seconds ?? 30} onChange={(e) => setManifest({ ...manifest, timeout_seconds: Number(e.target.value) })} />
             </label>
-            <label className="text-xs text-fg-muted inline-flex items-center gap-2 sm:col-span-2">
-              <input type="checkbox" className="size-4 accent-[var(--color-accent)]" checked={manifest.requires_approval ?? false} onChange={(e) => setManifest({ ...manifest, requires_approval: e.target.checked })} />
-              Requires approval (prompt before each call)
-            </label>
-            <label className="text-xs text-fg-muted inline-flex items-center gap-2 sm:col-span-2">
-              <input type="checkbox" className="size-4 accent-[var(--color-accent)]" checked={manifest.trusted} onChange={(e) => setManifest({ ...manifest, trusted: e.target.checked })} />
-              Trusted (can be enabled and reach the agent)
-            </label>
+              <div className="text-xs text-fg-muted inline-flex items-center gap-2 sm:col-span-2">
+                <Toggle label="Requires approval" checked={manifest.requires_approval ?? false} onCheckedChange={(next) => setManifest({ ...manifest, requires_approval: next })} />
+                Requires approval (prompt before each call)
+              </div>
+              <div className="text-xs text-fg-muted inline-flex items-center gap-2 sm:col-span-2">
+                <Toggle label="Trusted" checked={manifest.trusted} onCheckedChange={(next) => setManifest({ ...manifest, trusted: next })} />
+                Trusted (can be enabled and reach the agent)
+              </div>
           </div>
         </section>
       </div>

@@ -30,6 +30,11 @@ body {
   outline: none;
 }
 
+/* Keep toggle pills pill-shaped under the global focus radius override. */
+.toggle-switch:focus-visible {
+  border-radius: var(--radius-full);
+}
+
 ::selection {
   background: var(--accent-subtle);
 }
