@@ -32,7 +32,7 @@ anyhow = "1.0"
 thiserror = "2.0"
 uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs"] }
 futures-util = { version = "0.3", features = ["sink"] }
@@ -44,12 +44,14 @@ qrcode = "0.14"
 if-addrs = "0.15"
 rand = "0.9"
 rusqlite = { version = "0.40", features = ["bundled"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "multipart"] }
 # Pure-Rust PDF text extraction for Knowledge Dump file uploads.
 pdf-extract = "0.7"
 base64 = "0.22"
 tauri = "2.11"
 tauri-build = "2.6"
+include_dir = "0.7"
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

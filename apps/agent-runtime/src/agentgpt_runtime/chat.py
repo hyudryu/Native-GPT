@@ -205,7 +205,7 @@ class ChatRuns:
         pending_tools: dict[str, str],
         emitted_calls: set[str],
     ) -> int:
-        """Translate Strands tool_use/tool_result stream events into run.tool_call / run.tool_result envelopes.
+        """Translate Strands tool events into run.tool_call / run.tool_result.
 
         Returns the updated sequence number. See the Strands event map at the
         top of this module for the source shapes.
@@ -281,9 +281,17 @@ class ChatRuns:
         from strands import Agent  # noqa: PLC0415
 
         model = build_openai_model(payload)
-        tools = load_tools(payload.enabled_tools)
-        manifests = load_tool_manifests(payload.enabled_tools)
-        allowed = approval_allowed_tools(payload.enabled_tools, tools, manifests)
+        if payload.factory_mode:
+            # Factory runs only expose the save_tool proposer (no side effects).
+            from agentgpt_runtime.tools.factory import save_tool  # noqa: PLC0415
+
+            tools = [save_tool]
+            manifests = {}
+            allowed = tools
+        else:
+            tools = load_tools(payload.enabled_tools)
+            manifests = load_tool_manifests(payload.enabled_tools)
+            allowed = approval_allowed_tools(payload.enabled_tools, tools, manifests)
 
         sequence = 0
         # The approval gate (HumanInTheLoop). Only tools whose manifest sets
@@ -334,14 +342,25 @@ class ChatRuns:
             return "y" if approved else "n"
 
         interventions: list[Any] = []
-        if len(allowed) < len(tools):
+        if not payload.factory_mode and len(allowed) < len(tools):
             hitl = build_approval_intervention(allowed, ask_ui)
             interventions.append(hitl)
+
+        # Factory runs: prefer the host-supplied prompt; fall back to the
+        # built-in default (create mode). Revision prompts are assembled by
+        # the host and passed as system_prompt.
+        system_prompt = payload.system_prompt
+        if payload.factory_mode and not system_prompt:
+            from agentgpt_runtime.tools.factory import (  # noqa: PLC0415
+                FACTORY_SYSTEM_PROMPT,
+            )
+
+            system_prompt = FACTORY_SYSTEM_PROMPT
 
         agent = Agent(
             model=model,
             messages=strands_messages(payload.history),
-            system_prompt=payload.system_prompt,
+            system_prompt=system_prompt,
             tools=tools,
             interventions=interventions,
             # Strands' default callback handler PRINTS streamed text to stdout,

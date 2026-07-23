@@ -20,6 +20,12 @@ pub struct SendMessage {
     provider_id: Option<String>,
     #[serde(default)]
     model_id: Option<String>,
+    /// Tool Manager: run in factory mode (registers save_tool only).
+    #[serde(default)]
+    factory_mode: bool,
+    /// Tool Manager revision: the existing tool id to load as context.
+    #[serde(default)]
+    factory_revision: Option<String>,
 }
 
 fn resolution_error(error: ModelResolutionError) -> ApiError {
@@ -32,6 +38,59 @@ fn resolution_error(error: ModelResolutionError) -> ApiError {
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// The Tool Manager create prompt (mirrors the Python FACTORY_SYSTEM_PROMPT).
+const FACTORY_CREATE_PROMPT: &str = "\
+You are the Tool Manager. Given the user's request, produce ONE new Strands \
+tool by calling the save_tool function EXACTLY ONCE.\n\
+\n\
+Rules for tool_code:\n\
+- It is a complete, self-contained Python 3.12+ module.\n\
+- Start with `from strands import tool`.\n\
+- Define exactly one function decorated with `@tool`. Its docstring becomes \
+the Strands tool description shown to agents — write it clearly.\n\
+- End with `TOOL = <function_name>`.\n\
+- You may import the Python standard library. To share helpers, import from \
+`tools/_lib` using the project's importlib pattern (see existing tools).\n\
+- Return a plain string (or JSON-serializable value) from the function.\n\
+\n\
+Think briefly (1-3 sentences) about what the tool should do, then call \
+save_tool with every field filled in. Do not write files; save_tool returns \
+the proposal for a human to review.";
+
+/// Build the Tool Manager system prompt. Create mode uses FACTORY_CREATE_PROMPT;
+/// revision mode embeds the existing tool's manifest + source as context and
+/// instructs the model to return the full revised tool_code. Errors loading
+/// the existing tool propagate so the client gets a clear failure instead of
+/// a misleading empty-context revision prompt.
+async fn factory_system_prompt(
+    user_request: &str,
+    revision_target: Option<&str>,
+    state: &SharedState,
+) -> Result<String, ApiError> {
+    let (mode_line, context) = match revision_target {
+        Some(id) => {
+            let s = crate::tools::read_tool_source_public(state, id)?;
+            let manifest_json = serde_json::to_string_pretty(&s.manifest)
+                .map_err(|e| ApiError::internal(format!("failed to serialize manifest: {e}")))?;
+            let existing = format!(
+                "\n\nCURRENT MANIFEST:\n{manifest_json}\n\nCURRENT tool.py:\n{}\n",
+                s.tool_code,
+            );
+            (
+                "You are the Tool Manager in REVISION mode. Apply the user's \
+                 change to the existing tool below and call save_tool EXACTLY \
+                 ONCE with the FULL revised tool_code (not a diff). Keep the \
+                 id unchanged.",
+                existing,
+            )
+        }
+        None => (FACTORY_CREATE_PROMPT, String::new()),
+    };
+    Ok(format!(
+        "{mode_line}{context}\n\nUSER REQUEST: {user_request}"
+    ))
 }
 
 pub async fn send_message(
@@ -93,6 +152,20 @@ pub async fn send_message(
     };
     let enabled_tools = crate::tools::enabled_tool_ids(&state).await?;
 
+    // Tool Manager: override the system prompt and disable normal tools so the
+    // sidecar only exposes save_tool. A revision embeds the current tool.
+    let factory_mode = body.factory_mode;
+    let system_prompt = if factory_mode {
+        Some(factory_system_prompt(content, body.factory_revision.as_deref(), &state).await?)
+    } else {
+        system_prompt
+    };
+    let enabled_tools = if factory_mode {
+        Vec::new()
+    } else {
+        enabled_tools
+    };
+
     let created_at = now();
     let user_message = MessageRow {
         id: uuid::Uuid::now_v7().to_string(),
@@ -138,6 +211,7 @@ pub async fn send_message(
         system_prompt,
         enabled_tools,
         tls_verify: Some(resolved.tls_verify),
+        factory_mode,
         model: crate::protocol::RunModel {
             base_url: resolved.provider_url,
             model_id: resolved.model_id,

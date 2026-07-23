@@ -1,0 +1,42 @@
+[project]
+name = "agentgpt-bridge"
+version = "0.1.0"
+description = "Remote backend host (bridge) for AgentGPT: manages GPU workloads (ComfyUI, OpenVoice)"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "pydantic>=2.13,<3",
+    "httpx>=0.28,<1",
+    "python-multipart>=0.0.20,<1",
+    # ComfyUI and OpenVoice are managed as subprocesses; their own deps live in
+    # those workspaces. The bridge only needs httpx to talk to ComfyUI's HTTP API.
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<1",
+    "ruff>=0.14,<1",
+    "httpx>=0.28,<1",  # for test client
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentgpt_bridge"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
