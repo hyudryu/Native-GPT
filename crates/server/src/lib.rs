@@ -237,6 +237,13 @@ pub async fn bind(config: ServerConfig) -> anyhow::Result<BoundServer> {
         Ok(path) => info!(path = %path.display(), "mcp servers config written"),
         Err(e) => warn!("failed to write mcp servers config: {e}"),
     }
+
+    // The browser panel is a per-session UI concern: it must open only when the
+    // user opens it (or an agent task reopens it), never auto-restore on launch.
+    // Reset the persisted panel mode to `hidden` before any UI connects. The
+    // user's last splitter width is still restored. Best-effort: a failure must
+    // not prevent startup.
+    state.browser.reset_panel_mode_to_hidden().await;
     // Point the sidecar at the generated config. The supervisor spawns the
     // sidecar lazily, and child processes inherit this process's environment.
     // SAFETY: set during single-threaded startup, before the sidecar (or any

@@ -1215,6 +1215,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn startup_reset_clears_persisted_panel_mode_but_keeps_width() {
+        // The browser panel is a per-session UI concern: it must not auto-restore
+        // its visibility on a fresh host start. Persist "split" (simulating a
+        // previous session left the panel open), then reset on startup and assert
+        // the mode is cleared while the splitter width survives.
+        let rig = crate::state::test_state("tok");
+        // Seed persisted prefs with a non-hidden mode and a custom width.
+        rig.state
+            .db
+            .upsert_browser_preferences(&crate::db::BrowserPreferencesRow {
+                profile_id: "default".to_string(),
+                panel_mode: "split".to_string(),
+                panel_width: 900,
+                previous_panel_width: Some(640),
+                auto_open_on_tool_call: true,
+                keep_running_when_hidden: true,
+                remote_streaming_enabled: false,
+                model_mode: "follow_conversation".to_string(),
+                model_endpoint_id: None,
+                model_id: None,
+            })
+            .await
+            .unwrap();
+
+        rig.state.browser.reset_panel_mode_to_hidden().await;
+
+        let prefs = rig
+            .state
+            .db
+            .get_browser_preferences("default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prefs.panel_mode, "hidden", "panel mode resets to hidden");
+        assert_eq!(prefs.panel_width, 900, "splitter width is preserved");
+        assert_eq!(prefs.previous_panel_width, Some(640));
+    }
+
+    #[tokio::test]
     async fn approval_resolution_round_trip() {
         let rig = crate::state::test_state("tok");
         let state = rig.state.clone();

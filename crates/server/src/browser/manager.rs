@@ -419,6 +419,31 @@ impl BrowserManager {
         self.emit(StreamEvent::State(Box::new(snapshot)));
     }
 
+    /// Reset the persisted panel mode to `hidden` on a fresh process start.
+    ///
+    /// The panel is a client-side UI concern: it should open only when the user
+    /// opens it this session (or an agent task reopens it), not auto-restore on
+    /// every app launch. Persisted `panel_width` (the user's last splitter
+    /// position) is preserved. Called once at host startup before any UI
+    /// connects, so the first state snapshot reports `hidden`.
+    pub async fn reset_panel_mode_to_hidden(&self) {
+        let mut prefs = match self.db.get_browser_preferences("default").await {
+            Ok(Some(p)) => p,
+            // No preferences row yet (fresh install): nothing to reset.
+            Ok(None) => return,
+            Err(e) => {
+                warn!(error = %e, "failed to read browser preferences on startup");
+                return;
+            }
+        };
+        if prefs.panel_mode != "hidden" {
+            prefs.panel_mode = "hidden".to_string();
+            if let Err(e) = self.db.upsert_browser_preferences(&prefs).await {
+                warn!(error = %e, "failed to reset persisted panel mode on startup");
+            }
+        }
+    }
+
     // ---- approvals ----
 
     /// Register a pending approval; resolves when the UI calls
