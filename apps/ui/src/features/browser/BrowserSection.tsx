@@ -35,8 +35,11 @@ export default function BrowserSection() {
   const setKeepHidden = useBrowserStore((s) => s.setKeepHiddenDuringAutomation);
 
   const [installOpen, setInstallOpen] = useState(false);
-  const [modelMode, setModelMode] = useState("follow_conversation");
-  const [fixedModel, setFixedModel] = useState("");
+  // "Coming soon" scaffolding: the automation-model radios/select below are
+  // permanently disabled (no server endpoint yet), so their values are plain
+  // constants — they only seed the initial visual state and never change.
+  const modelMode: string = "follow_conversation";
+  const fixedModel: string = "";
 
   const info = component.data;
   const status = info?.status ?? installStatus;
@@ -215,7 +218,6 @@ export default function BrowserSection() {
                 aria-checked={modelMode === opt.value}
                 disabled
                 title={COMING_SOON}
-                onClick={() => setModelMode(opt.value)}
                 className={`flex min-h-11 flex-1 cursor-not-allowed items-center gap-3 rounded-xl border px-3 text-left opacity-60 ${
                   modelMode === opt.value
                     ? "border-accent bg-accent-subtle"
@@ -238,7 +240,6 @@ export default function BrowserSection() {
               aria-label="Fixed browser model"
               value={fixedModel}
               disabled
-              onChange={(event) => setFixedModel(event.target.value)}
               className="mt-2 min-h-11 w-full rounded-xl border border-border bg-surface-1 px-3 text-sm text-fg opacity-60 no-focus-ring"
             >
               <option value="">Select a model</option>

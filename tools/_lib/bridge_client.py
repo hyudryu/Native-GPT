@@ -115,6 +115,12 @@ def internal_post(
 def _handle(resp: httpx.Response) -> Any:
     if resp.status_code == 204:
         return None
+    # An empty body is a valid "no content" success (e.g. an endpoint that
+    # legitimately returns nothing). A non-empty, non-JSON 2xx body (HTML error
+    # page, misconfigured proxy) is an upstream problem that would otherwise
+    # silently become None — surface it so callers see the failure.
+    if 200 <= resp.status_code < 300 and not resp.content.strip():
+        return None
     try:
         body = resp.json()
     except (ValueError, httpx.DecodingError):
@@ -124,7 +130,11 @@ def _handle(resp: httpx.Response) -> Any:
                 resp.text[:500] if resp.text else f"status {resp.status_code}",
                 resp.status_code,
             ) from None
-        return None
+        raise BridgeClientError(
+            f"http_{resp.status_code}",
+            resp.text[:500] if resp.text else f"status {resp.status_code}",
+            resp.status_code,
+        ) from None
     if resp.status_code >= 400:
         err = body.get("error") if isinstance(body, dict) else None
         if isinstance(err, dict):

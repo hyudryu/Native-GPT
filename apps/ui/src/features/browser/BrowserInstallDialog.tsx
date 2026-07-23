@@ -119,7 +119,11 @@ export default function BrowserInstallDialog({
                 )}
               </div>
             )}
-            {install.isError && (
+            {/* The stream/store is the source of truth for the install status.
+                Only surface the mutation error until the store catches up, to
+                avoid two overlapping error paragraphs (install.isError + status
+                === "error"). */}
+            {install.isError && !(status === "error" && error) && (
               <p role="alert" className="mt-2 text-sm text-danger">
                 {install.error.message}
               </p>

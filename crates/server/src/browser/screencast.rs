@@ -32,7 +32,8 @@ pub fn jpeg_quality(viewer_count: usize) -> u32 {
     }
 }
 
-/// Cap frame dimensions to the viewer viewport (already in device pixels).
+/// Convert viewport from CSS pixels to device pixel dimensions for capping
+/// screencast frame size.
 pub fn max_dimensions(viewport: &ViewportSize) -> (u32, u32) {
     let width = (viewport.width as f64 * viewport.device_scale_factor).round() as u32;
     let height = (viewport.height as f64 * viewport.device_scale_factor).round() as u32;
@@ -103,6 +104,14 @@ impl ScreencastPump {
         let pump_session = session_id.clone();
         let task = tokio::spawn(async move {
             loop {
+                // The CDP socket may have died (browser closed, tab crashed,
+                // process killed). Without this check the pump keeps consuming
+                // CPU on a dead connection whose event channel is empty; ack
+                // failures are logged but never seen here (the JoinHandle is
+                // dropped each iteration). Stop once the connection is gone.
+                if pump_cdp.is_closed() {
+                    break;
+                }
                 match events.recv().await {
                     Ok(event) => {
                         if event.method != "Page.screencastFrame"
@@ -114,6 +123,11 @@ impl ScreencastPump {
                         let Some((frame, cdp_frame_session)) =
                             frame_from_event(&event.params, frame_id)
                         else {
+                            // Malformed CDP event (protocol drift, corruption,
+                            // browser bug). Without a log here the screencast
+                            // silently goes dark — the single biggest debugging
+                            // blind spot in this module.
+                            debug!(?event.params, "screencast frame parse failed");
                             continue;
                         };
                         // Ack first so Chromium keeps producing frames even if

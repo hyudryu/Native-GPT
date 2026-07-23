@@ -16,6 +16,9 @@ import BrowserViewport from "./BrowserViewport";
  * it survives route changes. Renders the splitter, tab row, toolbar, task
  * banner, and viewport; owns panel-mode width math and server hydration.
  */
+
+const ARIA_LABEL = "Native GPT Browser";
+
 export default function BrowserPanel() {
   const mode = useBrowserStore((s) => s.mode);
   const panelWidth = useBrowserStore((s) => s.panelWidth);
@@ -26,6 +29,13 @@ export default function BrowserPanel() {
   const toggleCompactSplit = useBrowserStore((s) => s.toggleCompactSplit);
 
   const panelRef = useRef<HTMLElement | null>(null);
+  // Tracks an in-flight drag so an unmount (e.g. route switch) can release the
+  // window listeners and reset the store — otherwise `dragging` sticks true and
+  // the splitter's width-preservation logic (browserStore.applyServerState) breaks.
+  const dragState = useRef<{
+    onMove: (move: PointerEvent) => void;
+    onUp: (event: PointerEvent) => void;
+  } | null>(null);
 
   // Initial state fetch → store hydration. After the stream connects it owns
   // live updates (stream wins; no polling here).
@@ -68,14 +78,33 @@ export default function BrowserPanel() {
       // Panel is on the right: dragging left grows it.
       setSplitWidth(startWidth + (startX - move.clientX));
     };
-    const onUp = () => {
+    // pointerup and pointercancel are both terminal — cancel can fire when the
+    // finger leaves the window or the browser loses focus mid-drag.
+    const end = () => {
       setDragging(false);
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      dragState.current = null;
     };
+    dragState.current = { onMove, onUp: end };
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
   };
+
+  // Release window listeners and clear the store if the panel unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      const drag = dragState.current;
+      if (drag) {
+        window.removeEventListener("pointermove", drag.onMove);
+        window.removeEventListener("pointerup", drag.onUp);
+        window.removeEventListener("pointercancel", drag.onUp);
+        useBrowserStore.getState().setDragging(false);
+      }
+    };
+  }, []);
 
   const content = (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -102,7 +131,7 @@ export default function BrowserPanel() {
     return (
       <aside
         ref={panelRef}
-        aria-label="Native GPT Browser"
+        aria-label={ARIA_LABEL}
         style={{ width: Math.min(width, containerWidth) }}
         className="absolute inset-y-0 right-0 z-30 flex border-l border-border bg-surface-1 shadow-xl"
       >
