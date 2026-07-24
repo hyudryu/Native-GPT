@@ -31,6 +31,7 @@ from agentgpt_runtime.protocol import (
     TYPE_RUN_APPROVE_OK,
     TYPE_RUN_CANCEL,
     TYPE_RUN_START,
+    TYPE_RUN_SYNTHESIZE_NOW,
     TYPE_SHUTDOWN,
     EndpointTestPayload,
     Envelope,
@@ -41,6 +42,7 @@ from agentgpt_runtime.protocol import (
     RunApprovePayload,
     RunCancelPayload,
     RunStartPayload,
+    RunSynthesizeNowPayload,
     make_envelope,
     make_error,
 )
@@ -152,6 +154,21 @@ def dispatch(envelope: Envelope) -> Envelope | None:
                 envelope.request_id, "runtime_unavailable", "chat runner not configured"
             )
         return chat_runs.cancel(payload.run_id, envelope.request_id)
+
+    if envelope.type == TYPE_RUN_SYNTHESIZE_NOW:
+        try:
+            payload = RunSynthesizeNowPayload.model_validate(envelope.payload)
+        except ValidationError as exc:
+            return make_error(
+                envelope.request_id,
+                "bad_request",
+                f"invalid run.synthesize_now payload: {exc}",
+            )
+        if chat_runs is None:
+            return make_error(
+                envelope.request_id, "runtime_unavailable", "chat runner not configured"
+            )
+        return chat_runs.synthesize_now(payload.run_id, envelope.request_id)
 
     if envelope.type == TYPE_RUN_APPROVE:
         try:

@@ -10,6 +10,9 @@ import { authFetch } from "./auth";
  * All requests go through authFetch (bearer token; localhost exempt server-side).
  */
 
+/** Per-endpoint thinking-mode request-param override (design spec §1.1/§2). */
+export type ThinkingParams = Record<string, unknown>;
+
 export interface Endpoint {
   id: string;
   name: string;
@@ -20,6 +23,10 @@ export interface Endpoint {
   default_model_id: string | null;
   last_test_status: "ok" | "failed" | null;
   last_tested_at: string | null;
+  /** JSON text of the thinking-off params override, or null when unset. */
+  thinking_off_params_json: string | null;
+  /** JSON text of the thinking-high params override, or null when unset. */
+  thinking_high_params_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +94,10 @@ export interface CreateEndpointInput {
   api_key?: string;
   timeout_seconds?: number;
   tls_verify?: boolean;
+  /** Merged verbatim into the request when thinking mode is Off (JSON object). */
+  thinking_off_params?: ThinkingParams | null;
+  /** Merged verbatim into the request when thinking mode is On (JSON object). */
+  thinking_high_params?: ThinkingParams | null;
 }
 
 export function createEndpoint(input: CreateEndpointInput): Promise<Endpoint> {
@@ -104,6 +115,10 @@ export interface UpdateEndpointInput {
   timeout_seconds?: number;
   tls_verify?: boolean;
   default_model_id?: string | null;
+  /** object = set, null = clear, absent = keep. */
+  thinking_off_params?: ThinkingParams | null;
+  /** object = set, null = clear, absent = keep. */
+  thinking_high_params?: ThinkingParams | null;
 }
 
 export function updateEndpoint(

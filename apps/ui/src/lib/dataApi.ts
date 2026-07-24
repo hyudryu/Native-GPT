@@ -1,5 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "./auth";
+import type { MaxDepth, ThinkingMode } from "./thinkingMode";
+
+/** Body of POST /conversations/:id/messages (design spec §4). */
+export interface SendMessageInput {
+  content: string;
+  endpoint_id?: string;
+  model_id?: string;
+  factory_mode?: boolean;
+  factory_revision?: string;
+  /** Thinking mode for this run; the server defaults to "high" when absent. */
+  thinking_mode?: ThinkingMode;
+  /** Depth preset, only meaningful when thinking_mode is "max". */
+  max_depth?: MaxDepth;
+}
 
 export interface Project {
   id: string;
@@ -297,7 +311,7 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
 
 export async function sendMessage(
   conversationId: string,
-  input: { content: string; endpoint_id?: string; model_id?: string; factory_mode?: boolean; factory_revision?: string },
+  input: SendMessageInput,
 ): Promise<{ message: Message; run: RunRef }> {
   return request(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -307,6 +321,15 @@ export async function sendMessage(
 
 export function cancelRun(id: string): Promise<void> {
   return request(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
+/**
+ * Ask a thinking_mode=max run to stop investigating and synthesize its partial
+ * results (design spec §3.7). The server acks via a run.synthesize_now.ok WS
+ * event; the run continues through SYNTHESIZE → COMPLETE.
+ */
+export function synthesizeNow(id: string): Promise<void> {
+  return request(`/api/runs/${encodeURIComponent(id)}/synthesize-now`, { method: "POST" });
 }
 
 export async function listEnabledModels(): Promise<EnabledModel[]> {
@@ -456,7 +479,7 @@ export function useMessages(conversationId: string | undefined) {
 export function useSendMessage(conversationId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (input: { content: string; endpoint_id?: string; model_id?: string }) =>
+    mutationFn: (input: SendMessageInput) =>
       sendMessage(conversationId, input),
     // Optimistically append the user message so it shows the instant they hit
     // send, instead of waiting for the POST to return. The placeholder is
@@ -498,6 +521,10 @@ export function useSendMessage(conversationId: string) {
 
 export function useCancelRun() {
   return useMutation({ mutationFn: cancelRun });
+}
+
+export function useSynthesizeNow() {
+  return useMutation({ mutationFn: synthesizeNow });
 }
 
 export function useEnabledModels() {

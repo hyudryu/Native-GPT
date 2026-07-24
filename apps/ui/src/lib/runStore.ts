@@ -6,6 +6,31 @@ import type { RunRef } from "./dataApi";
 
 export type Activity = { message: string; source?: string };
 
+/** Structured progress of a thinking_mode=max run (design spec §5). */
+export type OrchestrationStepStatus = "pending" | "running" | "complete" | "failed" | "skipped";
+
+export interface OrchestrationStep {
+  id: string;
+  label: string;
+  status: OrchestrationStepStatus;
+  detail?: unknown;
+}
+
+export interface OrchestrationBudgets {
+  tokens_used: number;
+  token_budget: number;
+  elapsed_s: number;
+  time_budget_s: number;
+}
+
+export interface OrchestrationProgress {
+  state: string;
+  steps: OrchestrationStep[];
+  budgets: OrchestrationBudgets;
+  /** Set once the user (or the ack) confirms "stop and synthesize now". */
+  synthesizeRequested: boolean;
+}
+
 export type ToolCallStatus = "pending" | "ok" | "error";
 
 export type ToolCallEntry = {
@@ -34,6 +59,13 @@ export interface LiveRun {
   streamError: string | null;
   toolCalls: ToolCallEntry[];
   approval: ApprovalPrompt | null;
+  /** Latest run.orchestration payload while a max run is live; null otherwise. */
+  orchestration: OrchestrationProgress | null;
+  /**
+   * Decision-record path (POSIX relative, e.g. "runs/ct_<run_id>/decision.json")
+   * carried by run.completed for max runs; kept until the next run starts.
+   */
+  decisionRecord: string | null;
 }
 
 const THINKING: Activity = { message: "Thinking through the request" };
@@ -46,6 +78,8 @@ export const EMPTY_LIVE_RUN: LiveRun = {
   streamError: null,
   toolCalls: [],
   approval: null,
+  orchestration: null,
+  decisionRecord: null,
 };
 
 interface RunStoreState {
@@ -95,6 +129,8 @@ export const useRunStore = create<RunStoreState>()((set, get) => ({
           streamError: null,
           toolCalls: [],
           approval: null,
+          orchestration: null,
+          decisionRecord: null,
         },
       },
       runIndex: {
@@ -113,6 +149,7 @@ export const useRunStore = create<RunStoreState>()((set, get) => ({
     updateSlice(conversationId, (slice) => ({
       ...slice,
       activeRun: null,
+      orchestration: null,
       streamError: "Response stopped.",
     }));
     cleanupIndex(conversationId);
@@ -182,9 +219,75 @@ const RUN_EVENT_TYPES = [
   "run.tool_result",
   "run.approval_needed",
   "run.approval_resolved",
+  "run.orchestration",
+  "run.synthesize_now.ok",
   "run.completed",
   "run.failed",
 ] as const;
+
+const STEP_STATUSES: readonly OrchestrationStepStatus[] = [
+  "pending",
+  "running",
+  "complete",
+  "failed",
+  "skipped",
+];
+
+/**
+ * Defensively parse a run.orchestration payload (design spec §5). Returns null
+ * for malformed payloads so a single bad event cannot break the run view.
+ * Exported for unit tests.
+ */
+export function parseOrchestration(
+  payload: Record<string, unknown>,
+): OrchestrationProgress | null {
+  if (typeof payload.state !== "string" || payload.state.length === 0) return null;
+
+  const rawSteps = Array.isArray(payload.steps) ? payload.steps : [];
+  const steps: OrchestrationStep[] = [];
+  for (const raw of rawSteps) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.label !== "string") continue;
+    const status = STEP_STATUSES.includes(item.status as OrchestrationStepStatus)
+      ? (item.status as OrchestrationStepStatus)
+      : "pending";
+    steps.push({
+      id: item.id,
+      label: item.label,
+      status,
+      ...(item.detail !== undefined ? { detail: item.detail } : {}),
+    });
+  }
+
+  const rawBudgets = (payload.budgets ?? {}) as Record<string, unknown>;
+  const number = (value: unknown): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const budgets: OrchestrationBudgets = {
+    tokens_used: number(rawBudgets.tokens_used),
+    token_budget: number(rawBudgets.token_budget),
+    elapsed_s: number(rawBudgets.elapsed_s),
+    time_budget_s: number(rawBudgets.time_budget_s),
+  };
+
+  return { state: payload.state, steps, budgets, synthesizeRequested: false };
+}
+
+/** Activity-line text for an orchestration state transition (spec §6.3). */
+export function orchestrationActivityLabel(state: string): string {
+  const labels: Record<string, string> = {
+    FRAME: "Framing the problem…",
+    DECOMPOSE: "Decomposing into subproblems…",
+    INVESTIGATE: "Investigating subproblems…",
+    REVIEW: "Reviewing evidence…",
+    CRITIQUE: "Critiquing findings…",
+    RESOLVE: "Resolving contradictions…",
+    SYNTHESIZE: "Synthesizing the answer…",
+    COMPLETE: "Max thinking complete.",
+    FAILED: "Max thinking failed.",
+  };
+  return labels[state] ?? `Max thinking: ${state.toLowerCase()}…`;
+}
 
 /**
  * Envelopes that arrived before their run was registered in runIndex (e.g.
@@ -359,11 +462,45 @@ function dispatchRunEvent(
       );
       return;
     }
+    case "run.orchestration": {
+      const parsed = parseOrchestration(payload);
+      if (!parsed) return;
+      updateSlice(conversationId, (slice) => ({
+        ...slice,
+        orchestration: {
+          ...parsed,
+          // Preserve the local "synthesize requested" flag across snapshots.
+          synthesizeRequested: slice.orchestration?.synthesizeRequested ?? false,
+        },
+        // Replace the bare THINKING placeholder with real orchestration
+        // progress (plain run.activity one-liners still override this).
+        activity: {
+          message: orchestrationActivityLabel(parsed.state),
+          source: "Max thinking",
+        },
+      }));
+      return;
+    }
+    case "run.synthesize_now.ok": {
+      updateSlice(conversationId, (slice) =>
+        slice.orchestration
+          ? {
+              ...slice,
+              orchestration: { ...slice.orchestration, synthesizeRequested: true },
+            }
+          : slice,
+      );
+      return;
+    }
     case "run.completed": {
+      const decisionRecord =
+        typeof payload.decision_record === "string" ? payload.decision_record : null;
       updateSlice(conversationId, (slice) => ({
         ...slice,
         activeRun: null,
         approval: null,
+        orchestration: null,
+        decisionRecord,
       }));
       cleanupIndex(conversationId);
       void invalidateMessages(conversationId).then(() => clearStreamText(conversationId));
@@ -376,6 +513,7 @@ function dispatchRunEvent(
         streamError: error?.message ?? "The response failed.",
         activeRun: null,
         approval: null,
+        orchestration: null,
       }));
       cleanupIndex(conversationId);
       // The host persists any partial assistant text on failure/cancel — refetch.
