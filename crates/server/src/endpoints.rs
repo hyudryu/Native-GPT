@@ -114,7 +114,9 @@ fn validate_timeout(timeout_seconds: i64) -> Result<i64, ApiError> {
 /// (it is merged verbatim into the chat-completions request by the sidecar).
 fn thinking_params_json(value: Value, field: &str) -> Result<Option<String>, ApiError> {
     if !value.is_object() {
-        return Err(ApiError::bad_request(format!("{field} must be a JSON object")));
+        return Err(ApiError::bad_request(format!(
+            "{field} must be a JSON object"
+        )));
     }
     serde_json::to_string(&value)
         .map(Some)
