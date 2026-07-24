@@ -45,6 +45,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0009_browser",
         include_str!("../migrations/0009_browser.sql"),
     ),
+    (
+        "0010_thinking_params",
+        include_str!("../migrations/0010_thinking_params.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +133,10 @@ pub struct EndpointRow {
     pub default_model_id: Option<String>,
     pub last_test_status: Option<String>,
     pub last_tested_at: Option<String>,
+    /// Per-endpoint thinking-mode request-param overrides (JSON text of an
+    /// object, or NULL). Forwarded to the sidecar on run.start's model.
+    pub thinking_off_params_json: Option<String>,
+    pub thinking_high_params_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -383,6 +391,10 @@ pub struct ResolvedModel {
     /// The provider's TLS verification setting, forwarded to the sidecar so
     /// chat runs honor it just like endpoint tests and model discovery do.
     pub tls_verify: bool,
+    /// Per-endpoint thinking-mode request-param overrides (JSON text), from
+    /// the provider record; forwarded to the sidecar on run.start's model.
+    pub thinking_off_params_json: Option<String>,
+    pub thinking_high_params_json: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -420,6 +432,8 @@ fn endpoint_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EndpointRow> {
         default_model_id: row.get("default_model_id")?,
         last_test_status: row.get("last_test_status")?,
         last_tested_at: row.get("last_tested_at")?,
+        thinking_off_params_json: row.get("thinking_off_params_json")?,
+        thinking_high_params_json: row.get("thinking_high_params_json")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -522,7 +536,8 @@ fn knowledge_chunk_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Knowled
 }
 
 const ENDPOINT_COLUMNS: &str = "id, name, base_url, timeout_seconds, tls_verify, has_api_key, \
-     default_model_id, last_test_status, last_tested_at, created_at, updated_at";
+     default_model_id, last_test_status, last_tested_at, thinking_off_params_json, \
+     thinking_high_params_json, created_at, updated_at";
 
 const MODEL_COLUMNS: &str =
     "id, endpoint_id, remote_model_id, source, hidden, capabilities_json, raw_json, last_seen_at";
@@ -719,7 +734,7 @@ impl Db {
             conn.execute(
                 &format!(
                     "INSERT INTO endpoints ({ENDPOINT_COLUMNS}) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 ),
                 params![
                     e.id,
@@ -731,6 +746,8 @@ impl Db {
                     e.default_model_id,
                     e.last_test_status,
                     e.last_tested_at,
+                    e.thinking_off_params_json,
+                    e.thinking_high_params_json,
                     e.created_at,
                     e.updated_at,
                 ],
@@ -772,7 +789,9 @@ impl Db {
             conn.execute(
                 "UPDATE endpoints SET name = ?, base_url = ?, timeout_seconds = ?, \
                  tls_verify = ?, has_api_key = ?, default_model_id = ?, \
-                 last_test_status = ?, last_tested_at = ?, updated_at = ? \
+                 last_test_status = ?, last_tested_at = ?, \
+                 thinking_off_params_json = ?, thinking_high_params_json = ?, \
+                 updated_at = ? \
                  WHERE id = ?",
                 params![
                     e.name,
@@ -783,6 +802,8 @@ impl Db {
                     e.default_model_id,
                     e.last_test_status,
                     e.last_tested_at,
+                    e.thinking_off_params_json,
+                    e.thinking_high_params_json,
                     e.updated_at,
                     e.id,
                 ],
@@ -1688,6 +1709,8 @@ impl Db {
             provider_url: provider.base_url,
             model_id,
             tls_verify: provider.tls_verify,
+            thinking_off_params_json: provider.thinking_off_params_json,
+            thinking_high_params_json: provider.thinking_high_params_json,
         })
     }
 
@@ -2385,6 +2408,8 @@ mod tests {
             default_model_id: None,
             last_test_status: None,
             last_tested_at: None,
+            thinking_off_params_json: None,
+            thinking_high_params_json: None,
             created_at: "2026-07-20T00:00:00Z".to_string(),
             updated_at: "2026-07-20T00:00:00Z".to_string(),
         }

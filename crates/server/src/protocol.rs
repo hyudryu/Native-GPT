@@ -117,6 +117,13 @@ pub struct RunModel {
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Per-endpoint override of the thinking-OFF request params (JSON object
+    /// from the provider record); absent means the sidecar's profile table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_off_params: Option<serde_json::Value>,
+    /// Per-endpoint override of the thinking-HIGH request params.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_high_params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -136,6 +143,12 @@ pub struct RunStart {
     /// When true the sidecar runs in Tool Manager mode (registers save_tool).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub factory_mode: bool,
+    /// Thinking mode for this message: "off" | "high" | "max" (default high).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
+    /// Depth preset for thinking_mode=max: "quick" | "standard" | "deep".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<String>,
     pub model: RunModel,
 }
 
@@ -153,6 +166,19 @@ pub struct RunCancel {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct RunCancelled {
     pub run_id: String,
+}
+
+/// `run.synthesize_now` payload: stop investigating, synthesize partials.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RunSynthesizeNow {
+    pub run_id: String,
+}
+
+/// `run.synthesize_now.ok` payload.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RunSynthesizeNowOk {
+    pub run_id: String,
+    pub acknowledged: bool,
 }
 
 #[cfg(test)]
@@ -265,10 +291,14 @@ mod tests {
             enabled_tools: vec![],
             tls_verify: Some(false),
             factory_mode: false,
+            thinking_mode: None,
+            max_depth: None,
             model: RunModel {
                 base_url: "https://selfsigned.local".into(),
                 model_id: "m-1".into(),
                 api_key: None,
+                thinking_off_params: None,
+                thinking_high_params: None,
             },
         };
         let value = serde_json::to_value(&run).unwrap();

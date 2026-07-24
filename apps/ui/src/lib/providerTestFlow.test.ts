@@ -12,6 +12,8 @@ const endpoint: Endpoint = {
   default_model_id: null,
   last_test_status: null,
   last_tested_at: null,
+  thinking_off_params_json: null,
+  thinking_high_params_json: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };

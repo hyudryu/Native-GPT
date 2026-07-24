@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from agentgpt_runtime.chat import (
-    ChatRuns,
     DEFAULT_SYSTEM_PROMPT,
     GROUNDING_DIRECTIVE,
+    ChatRuns,
     activity_from_event,
     approval_allowed_tools,
     build_openai_model,
@@ -146,11 +146,19 @@ def test_grounding_directive_names_web_search_tool() -> None:
 @pytest.fixture
 def _unload_strands() -> None:
     """build_openai_model lazily imports strands; keep it out of sys.modules so
-    test_protocol's "not imported at startup" assertion still holds."""
+    test_protocol's "not imported at startup" assertion still holds. openai is
+    unloaded too: these tests monkeypatch httpx.AsyncClient/openai.AsyncOpenAI,
+    and openai._base_client subclasses httpx.AsyncClient AT IMPORT TIME — a
+    first import under the monkeypatch would poison that class hierarchy for
+    the rest of the process."""
     yield
     import sys
 
-    for name in [m for m in sys.modules if m == "strands" or m.startswith("strands.")]:
+    for name in [
+        m
+        for m in sys.modules
+        if m.split(".")[0] in {"strands", "openai"}
+    ]:
         del sys.modules[name]
 
 
@@ -179,6 +187,11 @@ def test_build_openai_model_tls_verify_false_injects_unverified_client(
         def __init__(self, **kwargs: object) -> None:
             captured["openai"] = kwargs
 
+    # Import openai BEFORE patching httpx: openai._base_client subclasses
+    # httpx.AsyncClient at import time, and a first import under the patch
+    # would build that hierarchy on a fake.
+    import openai  # noqa: F401
+
     monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
     monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
 
@@ -198,6 +211,14 @@ def test_build_openai_model_tls_verify_absent_keeps_secure_default(
 ) -> None:
     def fail_async_client(**kwargs: object) -> None:
         raise AssertionError("no custom http_client may be built when tls_verify is absent")
+
+    # Import strands/openai BEFORE patching httpx: openai._base_client
+    # subclasses httpx.AsyncClient at import time, and build_openai_model's
+    # lazy import would otherwise execute that class definition against the
+    # patched httpx.AsyncClient (a plain function here, which cannot be
+    # subclassed).
+    import openai  # noqa: F401
+    import strands.models.openai  # noqa: F401
 
     monkeypatch.setattr("httpx.AsyncClient", fail_async_client)
 

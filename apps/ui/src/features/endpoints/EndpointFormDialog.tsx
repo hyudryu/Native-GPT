@@ -12,6 +12,7 @@ import {
 } from "../../lib/endpoints";
 import {
   DEFAULT_TIMEOUT_SECONDS,
+  formatThinkingParams,
   hasErrors,
   toEndpointPayload,
   validateEndpointForm,
@@ -32,6 +33,8 @@ const emptyValues: EndpointFormValues = {
   api_key: "",
   clear_key: false,
   timeout_seconds: String(DEFAULT_TIMEOUT_SECONDS),
+  thinking_off_params: "",
+  thinking_high_params: "",
 };
 
 function valuesFromEndpoint(endpoint: Endpoint): EndpointFormValues {
@@ -41,6 +44,8 @@ function valuesFromEndpoint(endpoint: Endpoint): EndpointFormValues {
     api_key: "",
     clear_key: false,
     timeout_seconds: String(endpoint.timeout_seconds),
+    thinking_off_params: formatThinkingParams(endpoint.thinking_off_params_json),
+    thinking_high_params: formatThinkingParams(endpoint.thinking_high_params_json),
   };
 }
 
@@ -219,6 +224,50 @@ export default function EndpointFormDialog({
                   }
                   autoComplete="off"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="ep-thinking-off" className={labelCls}>
+                  Thinking-off params override
+                </label>
+                <textarea
+                  id="ep-thinking-off"
+                  rows={3}
+                  className={`${inputCls} resize-y py-2 font-mono text-xs`}
+                  value={values.thinking_off_params}
+                  onChange={(event) => set("thinking_off_params", event.target.value)}
+                  placeholder='{"reasoning_effort": "none"}'
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-xs text-fg-subtle">
+                  Optional JSON object merged into the request when thinking mode is Off.
+                </p>
+                {errors.thinking_off_params && (
+                  <p className={errorCls}>{errors.thinking_off_params}</p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="ep-thinking-high" className={labelCls}>
+                  Thinking-high params override
+                </label>
+                <textarea
+                  id="ep-thinking-high"
+                  rows={3}
+                  className={`${inputCls} resize-y py-2 font-mono text-xs`}
+                  value={values.thinking_high_params}
+                  onChange={(event) => set("thinking_high_params", event.target.value)}
+                  placeholder='{"reasoning_effort": "high"}'
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-xs text-fg-subtle">
+                  Optional JSON object merged into the request when thinking mode is On.
+                </p>
+                {errors.thinking_high_params && (
+                  <p className={errorCls}>{errors.thinking_high_params}</p>
+                )}
               </div>
             </div>
 

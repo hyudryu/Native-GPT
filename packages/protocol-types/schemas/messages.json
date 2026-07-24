@@ -123,13 +123,17 @@
         },
         "tls_verify": { "type": "boolean", "default": true, "description": "When false, the sidecar skips TLS certificate verification for the model server" },
         "factory_mode": { "type": "boolean", "default": false, "description": "When true, the sidecar runs in Tool Manager mode and registers the save_tool proposer meta-tool" },
+        "thinking_mode": { "type": "string", "enum": ["off", "high", "max"], "default": "high", "description": "Per-message thinking mode: off = request-level no-reasoning params, high = model's own high reasoning (default), max = multi-agent critical-thinking orchestration in the sidecar" },
+        "max_depth": { "type": "string", "enum": ["quick", "standard", "deep"], "default": "standard", "description": "Depth preset for thinking_mode=max (budgets, iterations, critics); ignored otherwise" },
         "model": {
           "type": "object",
           "required": ["base_url", "model_id"],
           "properties": {
             "base_url": { "type": "string" },
             "model_id": { "type": "string" },
-            "api_key": { "type": "string" }
+            "api_key": { "type": "string" },
+            "thinking_off_params": { "type": "object", "description": "Per-endpoint override of the thinking-OFF request params (merged into the chat-completions request); when present it replaces the built-in profile" },
+            "thinking_high_params": { "type": "object", "description": "Per-endpoint override of the thinking-HIGH request params; when present it replaces the built-in profile" }
           },
           "additionalProperties": false
         }
@@ -158,6 +162,64 @@
       "required": ["run_id"],
       "properties": {
         "run_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.synthesize_now": {
+      "type": "object",
+      "description": "UI -> host -> sidecar: for a thinking_mode=max run, stop investigating and synthesize the best available partial result now.",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "run.synthesize_now.ok": {
+      "type": "object",
+      "description": "Sidecar acknowledgement of run.synthesize_now; acknowledged=false means the run was unknown or already terminal.",
+      "required": ["run_id", "acknowledged"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "acknowledged": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "run.orchestration": {
+      "type": "object",
+      "description": "Sidecar -> host -> UI: structured progress of a thinking_mode=max orchestration. Emitted on every state transition and worker status change.",
+      "required": ["run_id", "state", "steps", "budgets"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "conversation_id": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["FRAME", "DECOMPOSE", "INVESTIGATE", "REVIEW", "CRITIQUE", "RESOLVE", "SYNTHESIZE", "COMPLETE", "FAILED"]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "status"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "status": { "type": "string", "enum": ["pending", "running", "complete", "failed", "skipped"] },
+              "detail": { "type": "object" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "required": ["tokens_used", "token_budget", "elapsed_s", "time_budget_s"],
+          "properties": {
+            "tokens_used": { "type": "integer", "minimum": 0 },
+            "token_budget": { "type": "integer", "minimum": 0 },
+            "elapsed_s": { "type": "number", "minimum": 0 },
+            "time_budget_s": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -270,7 +332,8 @@
       "required": ["run_id"],
       "properties": {
         "run_id": { "type": "string" },
-        "usage": { "type": "object" }
+        "usage": { "type": "object" },
+        "decision_record": { "type": "string", "description": "thinking_mode=max only: path (relative to app-data/) of the persisted decision record for this run" }
       },
       "additionalProperties": false
     },
