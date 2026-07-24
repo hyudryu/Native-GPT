@@ -151,65 +151,110 @@ function formatTimestamp(iso: string): string {
   return time.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/**
+ * Consolidated tool-call trace. Collapsed by default behind a single action
+ * summary line ("Used 3 tools · ran 8 commands"); expanding reveals every
+ * individual call, each of which can be drilled into for input/output detail.
+ */
 function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   if (entries.length === 0) return null;
+
+  const pendingCount = entries.filter((entry) => entry.status === "pending").length;
+  const errorCount = entries.filter((entry) => entry.status === "error").length;
+  const uniqueTools = new Set(entries.map((entry) => entry.tool)).size;
+
+  const running = pendingCount > 0;
+  const SummaryIcon = running ? LoaderCircle : errorCount > 0 ? X : Check;
+  const summaryIconClass = running
+    ? "animate-spin text-fg-muted"
+    : errorCount > 0
+      ? "text-danger"
+      : "text-success";
+
+  const summaryText = running
+    ? `Running tools · ${entries.length - pendingCount} of ${entries.length} done`
+    : `Used ${uniqueTools} ${uniqueTools === 1 ? "tool" : "tools"} · ran ${entries.length} ${
+        entries.length === 1 ? "command" : "commands"
+      }${errorCount > 0 ? ` · ${errorCount} failed` : ""}`;
+
   return (
-    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-[50.4rem] flex-col gap-1.5">
-      {entries.map((entry) => {
-        const open = openId === entry.callId;
-        const Icon = entry.status === "pending" ? LoaderCircle : entry.status === "ok" ? Check : X;
-        const iconClass =
-          entry.status === "pending"
-            ? "animate-spin text-fg-muted"
-            : entry.status === "ok"
-              ? "text-success"
-              : "text-danger";
-        return (
-          <li key={entry.callId} className="rounded-lg border border-border bg-surface-1 text-sm">
-            <button
-              type="button"
-              onClick={() => setOpenId(open ? null : entry.callId)}
-              aria-expanded={open}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
-            >
-              <Icon className={`size-3.5 shrink-0 ${iconClass}`} aria-hidden />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{entry.tool}</span>
-              {entry.summary && entry.status !== "pending" && (
-                <span className="min-w-0 flex-[2] truncate text-xs text-fg-muted">{entry.summary}</span>
-              )}
-              <ChevronDown
-                className={`size-3.5 shrink-0 text-fg-subtle transition-transform ${open ? "rotate-180" : ""}`}
-                aria-hidden
-              />
-            </button>
-            {open && (
-              <div className="space-y-2 border-t border-border px-3 py-2 font-mono text-xs leading-relaxed text-fg-muted">
-                {entry.input !== undefined && (
-                  <div>
-                    <p className="text-fg-subtle">input</p>
-                    <pre className="mt-0.5 overflow-x-auto rounded bg-surface-2 p-2 text-fg">{JSON.stringify(entry.input, null, 2)}</pre>
+    <div
+      aria-label="Tool calls"
+      className="mr-auto w-full max-w-[50.4rem] rounded-lg border border-border bg-surface-1 text-sm"
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      >
+        <SummaryIcon className={`size-3.5 shrink-0 ${summaryIconClass}`} aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-xs text-fg">{summaryText}</span>
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-fg-subtle transition-transform ${expanded ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {expanded && (
+        <ul className="flex flex-col gap-1.5 border-t border-border p-1.5">
+          {entries.map((entry) => {
+            const open = openId === entry.callId;
+            const Icon = entry.status === "pending" ? LoaderCircle : entry.status === "ok" ? Check : X;
+            const iconClass =
+              entry.status === "pending"
+                ? "animate-spin text-fg-muted"
+                : entry.status === "ok"
+                  ? "text-success"
+                  : "text-danger";
+            return (
+              <li key={entry.callId} className="rounded-md border border-border bg-surface-2 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setOpenId(open ? null : entry.callId)}
+                  aria-expanded={open}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+                >
+                  <Icon className={`size-3.5 shrink-0 ${iconClass}`} aria-hidden />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{entry.tool}</span>
+                  {entry.summary && entry.status !== "pending" && (
+                    <span className="min-w-0 flex-[2] truncate text-xs text-fg-muted">{entry.summary}</span>
+                  )}
+                  <ChevronDown
+                    className={`size-3.5 shrink-0 text-fg-subtle transition-transform ${open ? "rotate-180" : ""}`}
+                    aria-hidden
+                  />
+                </button>
+                {open && (
+                  <div className="space-y-2 border-t border-border px-3 py-2 font-mono text-xs leading-relaxed text-fg-muted">
+                    {entry.input !== undefined && (
+                      <div>
+                        <p className="text-fg-subtle">input</p>
+                        <pre className="mt-0.5 overflow-x-auto rounded bg-surface-1 p-2 text-fg">{JSON.stringify(entry.input, null, 2)}</pre>
+                      </div>
+                    )}
+                    {entry.data !== undefined && (
+                      <div>
+                        <p className="text-fg-subtle">output</p>
+                        <AssetPreview data={entry.data} />
+                        <pre className="mt-0.5 overflow-x-auto rounded bg-surface-1 p-2 text-fg">{JSON.stringify(entry.data, null, 2)}</pre>
+                      </div>
+                    )}
+                    {entry.error && (
+                      <div>
+                        <p className="text-fg-subtle">error</p>
+                        <pre className="mt-0.5 overflow-x-auto rounded bg-danger-subtle p-2 text-danger">{JSON.stringify(entry.error, null, 2)}</pre>
+                      </div>
+                    )}
                   </div>
                 )}
-                {entry.data !== undefined && (
-                  <div>
-                    <p className="text-fg-subtle">output</p>
-                    <AssetPreview data={entry.data} />
-                    <pre className="mt-0.5 overflow-x-auto rounded bg-surface-2 p-2 text-fg">{JSON.stringify(entry.data, null, 2)}</pre>
-                  </div>
-                )}
-                {entry.error && (
-                  <div>
-                    <p className="text-fg-subtle">error</p>
-                    <pre className="mt-0.5 overflow-x-auto rounded bg-danger-subtle p-2 text-danger">{JSON.stringify(entry.error, null, 2)}</pre>
-                  </div>
-                )}
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -367,7 +412,7 @@ function ModelPicker({
 
 const THINKING_MODE_OPTIONS: { value: ThinkingMode; label: string; description: string }[] = [
   { value: "off", label: "Off", description: "Fastest, direct answer" },
-  { value: "high", label: "High", description: "Model's own deep reasoning" },
+  { value: "high", label: "On", description: "Model's own deep reasoning" },
   { value: "max", label: "Max", description: "Multi-agent critical analysis" },
 ];
 

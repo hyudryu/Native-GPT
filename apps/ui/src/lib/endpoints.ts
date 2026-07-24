@@ -96,7 +96,7 @@ export interface CreateEndpointInput {
   tls_verify?: boolean;
   /** Merged verbatim into the request when thinking mode is Off (JSON object). */
   thinking_off_params?: ThinkingParams | null;
-  /** Merged verbatim into the request when thinking mode is High (JSON object). */
+  /** Merged verbatim into the request when thinking mode is On (JSON object). */
   thinking_high_params?: ThinkingParams | null;
 }
 

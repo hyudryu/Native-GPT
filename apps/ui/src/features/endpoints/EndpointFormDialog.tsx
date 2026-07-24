@@ -263,7 +263,7 @@ export default function EndpointFormDialog({
                   spellCheck={false}
                 />
                 <p className="mt-1 text-xs text-fg-subtle">
-                  Optional JSON object merged into the request when thinking mode is High.
+                  Optional JSON object merged into the request when thinking mode is On.
                 </p>
                 {errors.thinking_high_params && (
                   <p className={errorCls}>{errors.thinking_high_params}</p>
