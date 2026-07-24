@@ -158,6 +158,8 @@ async fn resolve_model(
             provider_url: endpoint.base_url,
             model_id: model_id.clone(),
             tls_verify: endpoint.tls_verify,
+            thinking_off_params_json: endpoint.thinking_off_params_json,
+            thinking_high_params_json: endpoint.thinking_high_params_json,
         });
     }
     let conversation_id = grant.conversation_id.as_deref().ok_or_else(|| {

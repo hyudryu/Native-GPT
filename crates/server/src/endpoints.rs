@@ -28,6 +28,12 @@ pub struct CreateEndpoint {
     timeout_seconds: Option<i64>,
     #[serde(default)]
     tls_verify: Option<bool>,
+    /// Per-endpoint thinking-OFF request-param override (JSON object).
+    #[serde(default)]
+    thinking_off_params: Option<Value>,
+    /// Per-endpoint thinking-HIGH request-param override (JSON object).
+    #[serde(default)]
+    thinking_high_params: Option<Value>,
 }
 
 /// Serde helper for tri-state fields: absent = keep (None), null = clear
@@ -53,9 +59,15 @@ pub struct PatchEndpoint {
     timeout_seconds: Option<i64>,
     #[serde(default)]
     tls_verify: Option<bool>,
-    /// Tri-state: absent = keep, null = clear, string = set.
+    /// Tri-state: absent = keep, null = clear, object = set.
     #[serde(default, deserialize_with = "deserialize_some")]
     default_model_id: Option<Option<String>>,
+    /// Tri-state per-endpoint thinking-OFF request-param override.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    thinking_off_params: Option<Option<Value>>,
+    /// Tri-state per-endpoint thinking-HIGH request-param override.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    thinking_high_params: Option<Option<Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +110,17 @@ fn validate_timeout(timeout_seconds: i64) -> Result<i64, ApiError> {
     }
 }
 
+/// Serialize a thinking-params override for storage, requiring a JSON object
+/// (it is merged verbatim into the chat-completions request by the sidecar).
+fn thinking_params_json(value: Value, field: &str) -> Result<Option<String>, ApiError> {
+    if !value.is_object() {
+        return Err(ApiError::bad_request(format!("{field} must be a JSON object")));
+    }
+    serde_json::to_string(&value)
+        .map(Some)
+        .map_err(|e| ApiError::bad_request(format!("invalid {field}: {e}")))
+}
+
 async fn load_endpoint(state: &SharedState, id: &str) -> Result<EndpointRow, ApiError> {
     state
         .db
@@ -134,6 +157,14 @@ pub async fn create_endpoint(
         default_model_id: None,
         last_test_status: None,
         last_tested_at: None,
+        thinking_off_params_json: match body.thinking_off_params {
+            Some(v) => thinking_params_json(v, "thinking_off_params")?,
+            None => None,
+        },
+        thinking_high_params_json: match body.thinking_high_params {
+            Some(v) => thinking_params_json(v, "thinking_high_params")?,
+            None => None,
+        },
         created_at: now.clone(),
         updated_at: now,
     };
@@ -181,6 +212,18 @@ pub async fn patch_endpoint(
     }
     if let Some(default_model_id) = body.default_model_id {
         row.default_model_id = default_model_id;
+    }
+    if let Some(thinking_off_params) = body.thinking_off_params {
+        row.thinking_off_params_json = match thinking_off_params {
+            Some(value) => thinking_params_json(value, "thinking_off_params")?,
+            None => None, // explicit null: clear the override
+        };
+    }
+    if let Some(thinking_high_params) = body.thinking_high_params {
+        row.thinking_high_params_json = match thinking_high_params {
+            Some(value) => thinking_params_json(value, "thinking_high_params")?,
+            None => None,
+        };
     }
     match body.api_key {
         Some(Some(key)) if !key.is_empty() => {

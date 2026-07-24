@@ -16,10 +16,16 @@ from agentgpt_runtime.mcp_servers import load_mcp_clients
 from agentgpt_runtime.protocol import (
     TYPE_RUN_APPROVAL_NEEDED,
     TYPE_RUN_APPROVAL_RESOLVED,
+    TYPE_RUN_SYNTHESIZE_NOW_OK,
     Envelope,
     RunStartPayload,
     make_envelope,
     make_error,
+)
+from agentgpt_runtime.thinking import (
+    next_thinking_attempt,
+    process_cache,
+    thinking_attempt_ladder,
 )
 from agentgpt_runtime.tools import load_tool_manifests, load_tools
 
@@ -88,8 +94,12 @@ def openai_base_url(value: str) -> str:
     return value if value.endswith("/v1") else f"{value}/v1"
 
 
-def build_openai_model(payload: RunStartPayload) -> Any:
+def build_openai_model(payload: RunStartPayload, params: dict[str, Any] | None = None) -> Any:
     """Construct the Strands OpenAIModel for a run, honoring ``tls_verify``.
+
+    ``params`` is merged into the chat-completions request by Strands
+    (OpenAIModel's params passthrough) — this is how thinking off/high
+    profiles reach the provider.
 
     When verification is disabled (self-signed/internal CA servers) we cannot
     pass an ``http_client`` through ``client_args``: Strands builds a fresh
@@ -108,6 +118,7 @@ def build_openai_model(payload: RunStartPayload) -> Any:
             model_id=payload.model.model_id,
             client_args={"base_url": base_url, "api_key": api_key},
             stream=True,
+            params=params or None,
         )
     import httpx  # noqa: PLC0415
     from openai import AsyncOpenAI  # noqa: PLC0415
@@ -117,7 +128,12 @@ def build_openai_model(payload: RunStartPayload) -> Any:
         api_key=api_key,
         http_client=httpx.AsyncClient(verify=False),
     )
-    return OpenAIModel(client=client, model_id=payload.model.model_id, stream=True)
+    return OpenAIModel(
+        client=client,
+        model_id=payload.model.model_id,
+        stream=True,
+        params=params or None,
+    )
 
 
 def approval_allowed_tools(
@@ -206,6 +222,8 @@ def usage_from_result(result: Any | None) -> dict[str, int | float]:
 @dataclass
 class ActiveRun:
     cancelled: threading.Event = field(default_factory=threading.Event)
+    # Max mode only: user asked to stop investigating and synthesize now.
+    synthesize_now: threading.Event = field(default_factory=threading.Event)
     agent: Any | None = None
 
 
@@ -250,6 +268,20 @@ class ChatRuns:
         if active.agent is not None:
             active.agent.cancel()
         return make_envelope("run.cancelled", request_id, {"run_id": run_id})
+
+    def synthesize_now(self, run_id: str, request_id: str) -> Envelope:
+        """run.synthesize_now: flag a max-mode run to stop investigating and
+        synthesize its partial results (checked at every state transition)."""
+        with self._lock:
+            active = self._runs.get(run_id)
+        if active is None:
+            return make_error(request_id, "run_not_found", f"active run {run_id} not found")
+        active.synthesize_now.set()
+        return make_envelope(
+            TYPE_RUN_SYNTHESIZE_NOW_OK,
+            request_id,
+            {"run_id": run_id, "acknowledged": True},
+        )
 
     def resolve_approval(self, approval_id: str, approved: bool) -> bool:
         """Bridge a UI `run.approve` decision to the waiting run.
@@ -347,7 +379,53 @@ class ChatRuns:
         # Keep heavyweight/provider-specific imports off the startup path.
         from strands import Agent  # noqa: PLC0415
 
-        model = build_openai_model(payload)
+        if payload.thinking_mode == "max" and not payload.factory_mode:
+            # Max mode: structured multi-agent orchestration (design spec §3).
+            # Emits its own run.orchestration/run.activity/run.text_delta
+            # events and returns what the terminal event needs.
+            from agentgpt_runtime.orchestration import run_max_thinking  # noqa: PLC0415
+
+            max_result = await run_max_thinking(
+                payload=payload,
+                emit=self._emit,
+                request_id=request_id,
+                cancel_event=active.cancelled,
+                synthesize_now_event=active.synthesize_now,
+                approvals=self._approvals,
+            )
+            if max_result.cancelled:
+                self._emit(
+                    make_envelope(
+                        "run.failed",
+                        request_id,
+                        {
+                            "run_id": payload.run_id,
+                            "conversation_id": payload.conversation_id,
+                            "error": {
+                                "code": "cancelled",
+                                "message": "Run cancelled by the user",
+                                "retryable": False,
+                            },
+                        },
+                    )
+                )
+                return
+            completed_payload: dict[str, Any] = {
+                "run_id": payload.run_id,
+                "conversation_id": payload.conversation_id,
+                "usage": max_result.usage,
+            }
+            if max_result.decision_record:
+                # Additive: path (relative to app-data/) of the persisted
+                # decision record, for "Open evidence" in the UI.
+                completed_payload["decision_record"] = max_result.decision_record
+            self._emit(make_envelope("run.completed", request_id, completed_payload))
+            return
+
+        # Off/High: thinking profile params merged into the request, with a
+        # learn-on-400 retry ladder ending in a plain request (spec §§1-2).
+        thinking_cache = process_cache()
+        ladder = thinking_attempt_ladder(payload, thinking_cache)
         if payload.factory_mode:
             # Factory runs only expose the save_tool proposer (no side effects).
             from agentgpt_runtime.tools.factory import save_tool  # noqa: PLC0415
@@ -426,35 +504,6 @@ class ChatRuns:
             interventions.append(hitl)
 
         system_prompt = resolve_system_prompt(payload)
-        agent = Agent(
-            model=model,
-            messages=strands_messages(payload.history),
-            system_prompt=system_prompt,
-            tools=tools,
-            interventions=interventions,
-            # Strands' default callback handler PRINTS streamed text to stdout,
-            # which corrupts our NDJSON protocol channel (and crashes on
-            # non-ASCII under Windows cp1252). Replace it with a no-op —
-            # streaming is consumed from stream_async events below.
-            callback_handler=lambda **_: None,
-        )
-        active.agent = agent
-        if hitl is not None and mcp_clients:
-            # Approval gating (design spec §4): MCP tools carry no
-            # manifest.json, so they can't express requires_approval — in v1
-            # they run WITHOUT approval gating (the bridge's bearer token,
-            # explicitly configured per host by the user, is the auth
-            # boundary). The HITL gate prompts for any tool not on its
-            # allow-list, so the freshly loaded MCP tool names must be added
-            # to it; MCPAgentTool instances are identifiable by their
-            # `mcp_client` attribute.
-            hitl.allow(
-                [
-                    name
-                    for name, tool in agent.tool_registry.registry.items()
-                    if getattr(tool, "mcp_client", None) is not None
-                ]
-            )
         result = None
         # call_id (Strands toolUseId) -> tool name, so we can label each
         # tool_result with the originating tool. Strands' result message does
@@ -475,26 +524,115 @@ class ChatRuns:
             ).model_copy(update={"sequence": sequence})
         )
         sequence += 1
+
+        # Thinking off/high retry ladder (spec §1.1): try the profile params,
+        # and on a 400-class parameter error rebuild the model+agent with the
+        # next param set (off: reasoning_effort "minimal"; then none). Safe
+        # because a parameter 400 surfaces on the FIRST model request, before
+        # any delta is emitted — once anything reached the wire we never
+        # retry (a partial answer is not replayable).
+        attempt = 0
+        agent: Any | None = None
         try:
-            async for event in agent.stream_async(payload.prompt):
-                if active.cancelled.is_set():
-                    agent.cancel()
-                    break
-                if not isinstance(event, dict):
-                    continue
-                if event.get("result") is not None:
-                    result = event["result"]
-                sequence = self._emit_tool_events(
-                    event,
-                    payload.run_id,
-                    payload.conversation_id,
-                    request_id,
-                    sequence,
-                    pending_tools,
-                    emitted_calls,
+            while True:
+                model = build_openai_model(payload, params=ladder[attempt])
+                agent = Agent(
+                    model=model,
+                    messages=strands_messages(payload.history),
+                    system_prompt=system_prompt,
+                    tools=tools,
+                    interventions=interventions,
+                    # Strands' default callback handler PRINTS streamed text to
+                    # stdout, which corrupts our NDJSON protocol channel (and
+                    # crashes on non-ASCII under Windows cp1252). Replace it
+                    # with a no-op — streaming is consumed from stream_async
+                    # events below.
+                    callback_handler=lambda **_: None,
                 )
-                activity = activity_from_event(event)
-                if activity is not None:
+                active.agent = agent
+                if hitl is not None and mcp_clients:
+                    # Approval gating (design spec §4): MCP tools carry no
+                    # manifest.json, so they can't express requires_approval —
+                    # in v1 they run WITHOUT approval gating (the bridge's
+                    # bearer token, explicitly configured per host by the user,
+                    # is the auth boundary). The HITL gate prompts for any tool
+                    # not on its allow-list, so the freshly loaded MCP tool
+                    # names must be added to it; MCPAgentTool instances are
+                    # identifiable by their `mcp_client` attribute.
+                    hitl.allow(
+                        [
+                            name
+                            for name, tool in agent.tool_registry.registry.items()
+                            if getattr(tool, "mcp_client", None) is not None
+                        ]
+                    )
+                emitted_any = False
+                try:
+                    async for event in agent.stream_async(payload.prompt):
+                        if active.cancelled.is_set():
+                            agent.cancel()
+                            break
+                        if not isinstance(event, dict):
+                            continue
+                        if event.get("result") is not None:
+                            result = event["result"]
+                        before = sequence
+                        sequence = self._emit_tool_events(
+                            event,
+                            payload.run_id,
+                            payload.conversation_id,
+                            request_id,
+                            sequence,
+                            pending_tools,
+                            emitted_calls,
+                        )
+                        activity = activity_from_event(event)
+                        if activity is not None:
+                            self._emit(
+                                make_envelope(
+                                    "run.activity",
+                                    request_id,
+                                    {
+                                        "run_id": payload.run_id,
+                                        "conversation_id": payload.conversation_id,
+                                        **activity,
+                                    },
+                                ).model_copy(update={"sequence": sequence})
+                            )
+                            sequence += 1
+                        text = event.get("data")
+                        if isinstance(text, str) and text:
+                            self._emit(
+                                make_envelope(
+                                    "run.text_delta",
+                                    request_id,
+                                    {
+                                        "run_id": payload.run_id,
+                                        "conversation_id": payload.conversation_id,
+                                        "text": text,
+                                    },
+                                ).model_copy(update={"sequence": sequence})
+                            )
+                            sequence += 1
+                        if sequence != before:
+                            emitted_any = True
+                    break  # stream finished; no more ladder attempts
+                except Exception as exc:
+                    nxt = next_thinking_attempt(exc, ladder, attempt, payload, thinking_cache)
+                    if emitted_any or nxt is None:
+                        raise
+                    attempt = nxt
+                    if ladder[attempt] is None:
+                        # The endpoint rejected every thinking-param attempt
+                        # and is now cached as unsupported (spec §1.1 step 5).
+                        notice = (
+                            "This endpoint does not support disabling thinking."
+                            if payload.thinking_mode == "off"
+                            else "This endpoint does not support reasoning parameters; "
+                            "continuing without them."
+                        )
+                    else:
+                        notice = "Endpoint rejected reasoning params; retrying."
                     self._emit(
                         make_envelope(
                             "run.activity",
@@ -502,25 +640,12 @@ class ChatRuns:
                             {
                                 "run_id": payload.run_id,
                                 "conversation_id": payload.conversation_id,
-                                **activity,
+                                "message": notice,
                             },
                         ).model_copy(update={"sequence": sequence})
                     )
                     sequence += 1
-                text = event.get("data")
-                if isinstance(text, str) and text:
-                    self._emit(
-                        make_envelope(
-                            "run.text_delta",
-                            request_id,
-                            {
-                                "run_id": payload.run_id,
-                                "conversation_id": payload.conversation_id,
-                                "text": text,
-                            },
-                        ).model_copy(update={"sequence": sequence})
-                    )
-                    sequence += 1
+                    continue
         finally:
             # MCPClient lifecycle: the run constructs fresh clients per run
             # (picking up config changes and resetting per-host failure
@@ -528,7 +653,7 @@ class ChatRuns:
             # what matches the per-request run lifecycle. cleanup() removes
             # the registry as a consumer, which stops each client's
             # background connection thread.
-            if mcp_clients:
+            if mcp_clients and agent is not None:
                 try:
                     agent.tool_registry.cleanup()
                 except Exception:  # noqa: BLE001 - cleanup must not fail the run

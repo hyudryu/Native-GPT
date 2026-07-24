@@ -410,6 +410,10 @@ pub fn build_router(state: SharedState) -> Router {
             get(phase3::list_messages).post(chat::send_message),
         )
         .route("/api/runs/{id}/cancel", post(chat::cancel_run))
+        .route(
+            "/api/runs/{id}/synthesize-now",
+            post(chat::synthesize_now_run),
+        )
         .route("/api/search", get(phase3::search))
         .route("/api/models", get(phase3::list_models))
         .route(

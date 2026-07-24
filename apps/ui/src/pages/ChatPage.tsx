@@ -6,9 +6,11 @@ import {
   Brain,
   Check,
   ChevronDown,
+  Circle,
   CircleStop,
   Globe,
   LoaderCircle,
+  Minus,
   Paperclip,
   Plus,
   Puzzle,
@@ -31,6 +33,7 @@ import {
   useMessages,
   useProjects,
   useSendMessage,
+  useSynthesizeNow,
   useUpdateConversation,
   type EnabledModel,
   type PersistedToolEvent,
@@ -41,8 +44,17 @@ import {
   useRunStore,
   type Activity,
   type ApprovalPrompt,
+  type OrchestrationProgress,
   type ToolCallEntry,
 } from "../lib/runStore";
+import {
+  loadMaxDepth,
+  loadThinkingMode,
+  saveMaxDepth,
+  saveThinkingMode,
+  type MaxDepth,
+  type ThinkingMode,
+} from "../lib/thinkingMode";
 import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
 import { assetPayload, renderableAssetUrl } from "../lib/assetUrl";
 import { useRemoteHosts } from "../lib/remoteHosts";
@@ -347,65 +359,67 @@ function ModelPicker({
   );
 }
 
-// ── Thinking level ───────────────────────────────────────────────────────────
-// UI-only for now: the level is persisted locally (new sessions default to the
-// last selection) but is not yet forwarded to the agent runtime.
+// ── Thinking mode (off / high / max) ─────────────────────────────────────────
+// Per-message mode (design spec §6.1): the selection is persisted in
+// localStorage as the default for the next send and forwarded to the runtime
+// on POST /conversations/:id/messages. Persistence + legacy-key migration live
+// in lib/thinkingMode.ts.
 
-type ThinkingLevel = "low" | "medium" | "high";
+const THINKING_MODE_OPTIONS: { value: ThinkingMode; label: string; description: string }[] = [
+  { value: "off", label: "Off", description: "Fastest, direct answer" },
+  { value: "high", label: "High", description: "Model's own deep reasoning" },
+  { value: "max", label: "Max", description: "Multi-agent critical analysis" },
+];
 
-const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high"];
-const THINKING_LEVEL_STORAGE_KEY = "agentgpt.thinkingLevel";
+const MAX_DEPTH_OPTIONS: { value: MaxDepth; label: string }[] = [
+  { value: "quick", label: "Quick" },
+  { value: "standard", label: "Standard" },
+  { value: "deep", label: "Deep" },
+];
 
-function loadThinkingLevel(): ThinkingLevel {
-  try {
-    const stored = window.localStorage.getItem(THINKING_LEVEL_STORAGE_KEY);
-    if (stored === "low" || stored === "medium" || stored === "high") return stored;
-  } catch {
-    // Storage unavailable (private mode, etc.) — fall through to the default.
-  }
-  return "medium";
-}
-
-function useThinkingLevel(): [ThinkingLevel, (level: ThinkingLevel) => void] {
-  const [level, setLevel] = useState<ThinkingLevel>(loadThinkingLevel);
-  const update = (next: ThinkingLevel) => {
-    setLevel(next);
-    try {
-      window.localStorage.setItem(THINKING_LEVEL_STORAGE_KEY, next);
-    } catch {
-      // Storage unavailable — keep the in-memory selection only.
-    }
+function useThinkingMode(): [ThinkingMode, (mode: ThinkingMode) => void] {
+  const [mode, setMode] = useState<ThinkingMode>(loadThinkingMode);
+  const update = (next: ThinkingMode) => {
+    setMode(next);
+    saveThinkingMode(next);
   };
-  return [level, update];
+  return [mode, update];
 }
 
-function thinkingLevelLabel(level: ThinkingLevel): string {
-  return level.charAt(0).toUpperCase() + level.slice(1);
+function useMaxDepth(): [MaxDepth, (depth: MaxDepth) => void] {
+  const [depth, setDepth] = useState<MaxDepth>(loadMaxDepth);
+  const update = (next: MaxDepth) => {
+    setDepth(next);
+    saveMaxDepth(next);
+  };
+  return [depth, update];
 }
 
-function ThinkingLevelPicker({
+function ThinkingModePicker({
   value,
   onChange,
   disabled = false,
 }: {
-  value: ThinkingLevel;
-  onChange: (value: ThinkingLevel) => void;
+  value: ThinkingMode;
+  onChange: (value: ThinkingMode) => void;
   disabled?: boolean;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
       <Select.Root
         value={value}
-        onValueChange={(next) => next !== null && onChange(next as ThinkingLevel)}
+        onValueChange={(next) => next !== null && onChange(next as ThinkingMode)}
         disabled={disabled}
       >
         <Select.Trigger
-          aria-label="Thinking level"
+          aria-label="Thinking mode"
           className="flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3 text-xs text-fg transition-colors duration-150 hover:bg-surface-2 disabled:opacity-60"
         >
           <Brain className="size-4 shrink-0 text-fg-subtle" aria-hidden />
           <Select.Value className="min-w-0 flex-1 truncate text-left">
-            {(current: ThinkingLevel) => thinkingLevelLabel(current)}
+            {(current: ThinkingMode) =>
+              THINKING_MODE_OPTIONS.find((option) => option.value === current)?.label ?? current
+            }
           </Select.Value>
           <Select.Icon className="shrink-0 text-fg-subtle">
             <ChevronDown className="size-4" aria-hidden />
@@ -413,17 +427,22 @@ function ThinkingLevelPicker({
         </Select.Trigger>
         <Select.Portal>
           <Select.Positioner side="top" align="end" sideOffset={6} alignItemWithTrigger={false} className="z-50">
-            <Select.Popup className="min-w-36 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
-              {THINKING_LEVELS.map((level) => (
+            <Select.Popup className="min-w-56 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              {THINKING_MODE_OPTIONS.map((option) => (
                 <Select.Item
-                  key={level}
-                  value={level}
-                  className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                  key={option.value}
+                  value={option.value}
+                  className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
                 >
                   <Select.ItemIndicator className="inline-flex w-4 shrink-0 items-center text-accent">
                     <Check className="size-3.5" aria-hidden />
                   </Select.ItemIndicator>
-                  <Select.ItemText className="truncate">{thinkingLevelLabel(level)}</Select.ItemText>
+                  <Select.ItemText className="min-w-0 flex-1">
+                    <span className="block truncate">{option.label}</span>
+                    <span className="block truncate text-[11px] text-fg-subtle">
+                      {option.description}
+                    </span>
+                  </Select.ItemText>
                 </Select.Item>
               ))}
             </Select.Popup>
@@ -431,6 +450,225 @@ function ThinkingLevelPicker({
         </Select.Portal>
       </Select.Root>
     </div>
+  );
+}
+
+/** Depth preset for Max mode; only rendered while Max is selected (spec §6.2). */
+function MaxDepthPicker({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: MaxDepth;
+  onChange: (value: MaxDepth) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+      <span className="shrink-0">Depth</span>
+      <Select.Root
+        value={value}
+        onValueChange={(next) => next !== null && onChange(next as MaxDepth)}
+        disabled={disabled}
+      >
+        <Select.Trigger
+          aria-label="Max depth"
+          className="flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3 text-xs text-fg transition-colors duration-150 hover:bg-surface-2 disabled:opacity-60"
+        >
+          <Select.Value className="min-w-0 flex-1 truncate text-left">
+            {(current: MaxDepth) =>
+              MAX_DEPTH_OPTIONS.find((option) => option.value === current)?.label ?? current
+            }
+          </Select.Value>
+          <Select.Icon className="shrink-0 text-fg-subtle">
+            <ChevronDown className="size-4" aria-hidden />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Positioner side="top" align="end" sideOffset={6} alignItemWithTrigger={false} className="z-50">
+            <Select.Popup className="min-w-32 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              {MAX_DEPTH_OPTIONS.map((option) => (
+                <Select.Item
+                  key={option.value}
+                  value={option.value}
+                  className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                >
+                  <Select.ItemIndicator className="inline-flex w-4 shrink-0 items-center text-accent">
+                    <Check className="size-3.5" aria-hidden />
+                  </Select.ItemIndicator>
+                  <Select.ItemText className="truncate">{option.label}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Popup>
+          </Select.Positioner>
+        </Select.Portal>
+      </Select.Root>
+    </div>
+  );
+}
+
+// ── Max run panel (design spec §6.3) ─────────────────────────────────────────
+
+function StepStatusIcon({ status }: { status: OrchestrationProgress["steps"][number]["status"] }) {
+  switch (status) {
+    case "complete":
+      return <Check className="size-3.5 shrink-0 text-success" aria-label="complete" />;
+    case "running":
+      return (
+        <LoaderCircle className="size-3.5 shrink-0 animate-spin text-fg-muted" aria-label="running" />
+      );
+    case "failed":
+      return <X className="size-3.5 shrink-0 text-danger" aria-label="failed" />;
+    case "skipped":
+      return <Minus className="size-3.5 shrink-0 text-fg-subtle" aria-label="skipped" />;
+    default:
+      return <Circle className="size-3.5 shrink-0 text-fg-subtle" aria-label="pending" />;
+  }
+}
+
+/** Compact one-line rendering of a step's detail payload (string or object). */
+function stepDetailText(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (typeof detail !== "object" || detail === null) return "";
+  return Object.entries(detail as Record<string, unknown>)
+    .map(([key, value]) =>
+      `${key}: ${Array.isArray(value) ? value.map(String).join(", ") : String(value)}`,
+    )
+    .join(" · ");
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1000) {
+    const k = value / 1000;
+    return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  return String(Math.round(value));
+}
+
+function formatSeconds(value: number): string {
+  const total = Math.max(0, Math.round(value));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function BudgetBar({
+  label,
+  used,
+  total,
+  format,
+}: {
+  label: string;
+  used: number;
+  total: number;
+  format: (value: number) => string;
+}) {
+  const ratio = total > 0 ? Math.min(1, Math.max(0, used / total)) : 0;
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="shrink-0 text-[11px] text-fg-subtle">{label}</span>
+      <div
+        role="progressbar"
+        aria-label={`${label} budget`}
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={used}
+        className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2"
+      >
+        <div className="h-full rounded-full bg-accent" style={{ width: `${ratio * 100}%` }} />
+      </div>
+      <span className="shrink-0 font-mono text-[11px] text-fg-muted">
+        {format(used)} / {format(total)}
+      </span>
+    </div>
+  );
+}
+
+function MaxRunPanel({
+  runId,
+  orchestration,
+  activity,
+}: {
+  runId: string;
+  orchestration: OrchestrationProgress;
+  activity: Activity;
+}) {
+  const synthesize = useSynthesizeNow();
+  const synthesizing = orchestration.state === "SYNTHESIZE";
+  const requested =
+    orchestration.synthesizeRequested || synthesize.isPending || synthesize.isSuccess;
+
+  return (
+    <section
+      aria-label="Max thinking progress"
+      aria-live="polite"
+      className="mr-auto w-full max-w-[50.4rem] rounded-xl border border-border bg-surface-1 p-3 text-sm"
+    >
+      <div className="flex items-center gap-2">
+        <Brain className="size-4 shrink-0 text-accent" aria-hidden />
+        <span className="font-medium text-fg">Max thinking</span>
+        <span className="min-w-0 truncate text-xs text-fg-muted">{activity.message}</span>
+      </div>
+
+      {orchestration.steps.length > 0 && (
+        <ul aria-label="Orchestration steps" className="mt-2 flex flex-col gap-1">
+          {orchestration.steps.map((step) => {
+            const detail = stepDetailText(step.detail);
+            return (
+              <li key={step.id} className="flex items-start gap-2 text-xs">
+                <span className="mt-0.5 inline-flex">
+                  <StepStatusIcon status={step.status} />
+                </span>
+                <span
+                  className={`min-w-0 flex-1 ${
+                    step.status === "pending" || step.status === "skipped"
+                      ? "text-fg-subtle"
+                      : "text-fg"
+                  }`}
+                >
+                  {step.label}
+                  {detail && (
+                    <span className="block truncate text-[11px] text-fg-muted">{detail}</span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2">
+        <BudgetBar
+          label="Tokens"
+          used={orchestration.budgets.tokens_used}
+          total={orchestration.budgets.token_budget}
+          format={formatTokenCount}
+        />
+        <BudgetBar
+          label="Time"
+          used={orchestration.budgets.elapsed_s}
+          total={orchestration.budgets.time_budget_s}
+          format={formatSeconds}
+        />
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => synthesize.mutate(runId)}
+          disabled={requested || synthesizing}
+          className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-border px-3 text-xs text-fg-muted transition-colors duration-150 hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {synthesize.isPending && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+          {synthesizing ? "Synthesizing…" : requested ? "Synthesis requested" : "Stop and synthesize now"}
+        </button>
+        {synthesize.isError && (
+          <span role="alert" className="text-xs text-danger">
+            {synthesize.error.message}
+          </span>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -552,7 +790,8 @@ function NewConversation() {
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
+  const [thinkingMode, setThinkingMode] = useThinkingMode();
+  const [maxDepth, setMaxDepth] = useMaxDepth();
 
   useEffect(() => {
     const available = models.data ?? [];
@@ -626,11 +865,18 @@ function NewConversation() {
             onChange={setSelectedModel}
             disabled={create.isPending}
           />
-          <ThinkingLevelPicker
-            value={thinkingLevel}
-            onChange={setThinkingLevel}
+          <ThinkingModePicker
+            value={thinkingMode}
+            onChange={setThinkingMode}
             disabled={create.isPending}
           />
+          {thinkingMode === "max" && (
+            <MaxDepthPicker
+              value={maxDepth}
+              onChange={setMaxDepth}
+              disabled={create.isPending}
+            />
+          )}
           <button
             type="submit"
             disabled={!draft.trim() || !selectedModel || create.isPending}
@@ -678,7 +924,8 @@ export default function ChatPage() {
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
+  const [thinkingMode, setThinkingMode] = useThinkingMode();
+  const [maxDepth, setMaxDepth] = useMaxDepth();
   // Live agent-run state is per conversation in the global store, so
   // navigating away mid-run never leaks one conversation's run into another.
   const live = useRunStore((s) =>
@@ -688,9 +935,16 @@ export default function ChatPage() {
   const stopRun = useRunStore((s) => s.stopRun);
   const clearApproval = useRunStore((s) => s.clearApproval);
   const { activeRun, streamText, activity, streamError, toolCalls, approval } = live;
+  const { orchestration, decisionRecord } = live;
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
+
+  // Thinking-mode fields for a send: max_depth rides along only in Max mode.
+  const thinkingFields = () => ({
+    thinking_mode: thinkingMode,
+    ...(thinkingMode === "max" ? { max_depth: maxDepth } : {}),
+  });
 
   // Landing from the new-conversation composer: send the first message
   // immediately so it streams live, then clear the navigation state.
@@ -713,10 +967,14 @@ export default function ChatPage() {
         content: state.firstMessage,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
+        ...thinkingFields(),
       },
       { onSuccess: ({ run }) => startRun(conversationId, run) },
     );
     navigate(location.pathname, { replace: true, state: null });
+    // thinkingFields reads the current hook values; the effect runs once per
+    // navigation state, so stale-closure risk is nil (autoSentRef guards).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, conversationId, messages.isPending, messages.data, navigate, send, startRun]);
 
   useEffect(() => {
@@ -759,7 +1017,7 @@ export default function ChatPage() {
   useEffect(() => {
     contentChangedAtRef.current = performance.now();
     return () => cancelAnimationFrame(rafIdRef.current);
-  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval, orchestration]);
 
   // Scroll-to-bottom after every paint whenever content changes.
   useLayoutEffect(() => {
@@ -767,7 +1025,7 @@ export default function ChatPage() {
     const el = scrollContainerRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: "auto" });
-  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval]);
+  }, [messages.data, activeRun, streamText, streamError, send.isError, toolCalls, approval, orchestration]);
 
   // Disable auto-scroll when the user manually scrolls away from the bottom.
   useEffect(() => {
@@ -858,6 +1116,7 @@ export default function ChatPage() {
         content,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
+        ...thinkingFields(),
       },
       {
         // Register the run against the conversation it was SENT to — the user
@@ -946,7 +1205,10 @@ export default function ChatPage() {
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
           {activeRun && approval && <ApprovalBanner approval={approval} onDecide={decideApproval} />}
-          {(send.isPending || activeRun) && !approval && !streamText && (
+          {activeRun && orchestration && (
+            <MaxRunPanel runId={activeRun.id} orchestration={orchestration} activity={activity} />
+          )}
+          {(send.isPending || activeRun) && !approval && !streamText && !orchestration && (
             <AgentActivity activity={send.isPending ? { message: "Sending…" } : activity} />
           )}
           {streamText && (
@@ -961,6 +1223,12 @@ export default function ChatPage() {
           {(streamError || send.isError) && (
             <p role="alert" className="rounded-xl bg-danger-subtle p-3 text-sm text-danger">
               {streamError ?? send.error?.message ?? "Message failed."}
+            </p>
+          )}
+          {decisionRecord && !activeRun && (
+            <p className="flex items-center gap-1.5 px-1 text-xs text-fg-subtle">
+              <Brain className="size-3.5 shrink-0" aria-hidden />
+              Decision record saved: <span className="font-mono">{decisionRecord}</span>
             </p>
           )}
 
@@ -1004,11 +1272,18 @@ export default function ChatPage() {
               aria-label="Message"
               className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle disabled:opacity-60"
             />
-            <ThinkingLevelPicker
-              value={thinkingLevel}
-              onChange={setThinkingLevel}
+            <ThinkingModePicker
+              value={thinkingMode}
+              onChange={setThinkingMode}
               disabled={Boolean(activeRun)}
             />
+            {thinkingMode === "max" && (
+              <MaxDepthPicker
+                value={maxDepth}
+                onChange={setMaxDepth}
+                disabled={Boolean(activeRun)}
+              />
+            )}
             {activeRun ? (
               <button
                 type="button"

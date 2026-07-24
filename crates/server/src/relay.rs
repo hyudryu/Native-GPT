@@ -10,7 +10,7 @@ use agentgpt_supervisor::{Supervisor, SupervisorError};
 use crate::error::ApiError;
 use crate::protocol::{
     EndpointTest, EndpointTestOk, Envelope, ModelInfo, ModelsList, ModelsListOk, ProtocolError,
-    RunCancel, RunCancelled, RunStart, RunStarted,
+    RunCancel, RunCancelled, RunStart, RunStarted, RunSynthesizeNow, RunSynthesizeNowOk,
 };
 
 /// Map a supervisor transport error to a 503 REST error.
@@ -132,6 +132,19 @@ pub async fn run_cancel(supervisor: &Supervisor, run_id: String) -> Result<RunCa
     let env = Envelope::new(
         "run.cancel",
         serde_json::to_value(RunCancel { run_id }).expect("RunCancel serializes"),
+    );
+    relay(supervisor, env).await
+}
+
+/// `run.synthesize_now`: ask a max-mode run to stop investigating and
+/// synthesize its partial results. Mirrors the run.cancel relay.
+pub async fn run_synthesize_now(
+    supervisor: &Supervisor,
+    run_id: String,
+) -> Result<RunSynthesizeNowOk, ApiError> {
+    let env = Envelope::new(
+        "run.synthesize_now",
+        serde_json::to_value(RunSynthesizeNow { run_id }).expect("RunSynthesizeNow serializes"),
     );
     relay(supervisor, env).await
 }

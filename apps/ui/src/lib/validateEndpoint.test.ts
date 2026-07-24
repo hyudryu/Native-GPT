@@ -14,6 +14,8 @@ function values(overrides: Partial<EndpointFormValues> = {}): EndpointFormValues
     api_key: "",
     clear_key: false,
     timeout_seconds: "15",
+    thinking_off_params: "",
+    thinking_high_params: "",
     ...overrides,
   };
 }
@@ -70,6 +72,33 @@ describe("validateEndpointForm", () => {
       hasErrors(validateEndpointForm(values({ timeout_seconds: "" }))),
     ).toBe(false);
   });
+
+  it("accepts JSON-object thinking params overrides", () => {
+    const errors = validateEndpointForm(
+      values({
+        thinking_off_params: '{"reasoning_effort": "none"}',
+        thinking_high_params: '{"thinking": {"type": "enabled"}}',
+      }),
+    );
+    expect(errors.thinking_off_params).toBeUndefined();
+    expect(errors.thinking_high_params).toBeUndefined();
+  });
+
+  it("rejects malformed JSON thinking params", () => {
+    const errors = validateEndpointForm(
+      values({ thinking_off_params: "{not json", thinking_high_params: "{" }),
+    );
+    expect(errors.thinking_off_params).toBeDefined();
+    expect(errors.thinking_high_params).toBeDefined();
+  });
+
+  it("rejects non-object JSON thinking params", () => {
+    const errors = validateEndpointForm(
+      values({ thinking_off_params: '["a"]', thinking_high_params: '"high"' }),
+    );
+    expect(errors.thinking_off_params).toBeDefined();
+    expect(errors.thinking_high_params).toBeDefined();
+  });
 });
 
 describe("toEndpointPayload", () => {
@@ -82,10 +111,29 @@ describe("toEndpointPayload", () => {
       name: "Ollama",
       base_url: "http://host:11434/v1",
       timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+      thinking_off_params: null,
+      thinking_high_params: null,
     });
   });
 
   it("uses the provided timeout", () => {
     expect(toEndpointPayload(values({ timeout_seconds: "42" })).timeout_seconds).toBe(42);
+  });
+
+  it("parses thinking params overrides into objects", () => {
+    expect(
+      toEndpointPayload(
+        values({
+          thinking_off_params: '{\n  "reasoning_effort": "none"\n}',
+          thinking_high_params: '{"reasoning_effort": "high"}',
+        }),
+      ),
+    ).toEqual({
+      name: "llama.cpp",
+      base_url: "http://127.0.0.1:8080/v1",
+      timeout_seconds: 15,
+      thinking_off_params: { reasoning_effort: "none" },
+      thinking_high_params: { reasoning_effort: "high" },
+    });
   });
 });

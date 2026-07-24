@@ -26,6 +26,13 @@ pub struct SendMessage {
     /// Tool Manager revision: the existing tool id to load as context.
     #[serde(default)]
     factory_revision: Option<String>,
+    /// Thinking mode for this message: "off" | "high" | "max" (default high).
+    #[serde(default)]
+    thinking_mode: Option<String>,
+    /// Depth preset for thinking_mode=max: "quick" | "standard" | "deep"
+    /// (default standard). Ignored for other modes.
+    #[serde(default)]
+    max_depth: Option<String>,
 }
 
 fn resolution_error(error: ModelResolutionError) -> ApiError {
@@ -105,6 +112,18 @@ pub async fn send_message(
     if body.provider_id.is_some() != body.model_id.is_some() {
         return Err(ApiError::bad_request(
             "provider_id and model_id must be supplied together",
+        ));
+    }
+    let thinking_mode = body.thinking_mode.unwrap_or_else(|| "high".to_string());
+    if !matches!(thinking_mode.as_str(), "off" | "high" | "max") {
+        return Err(ApiError::bad_request(
+            "thinking_mode must be one of: off, high, max",
+        ));
+    }
+    let max_depth = body.max_depth.unwrap_or_else(|| "standard".to_string());
+    if !matches!(max_depth.as_str(), "quick" | "standard" | "deep") {
+        return Err(ApiError::bad_request(
+            "max_depth must be one of: quick, standard, deep",
         ));
     }
 
@@ -212,10 +231,18 @@ pub async fn send_message(
         enabled_tools,
         tls_verify: Some(resolved.tls_verify),
         factory_mode,
+        thinking_mode: Some(thinking_mode),
+        max_depth: Some(max_depth),
         model: crate::protocol::RunModel {
             base_url: resolved.provider_url,
             model_id: resolved.model_id,
             api_key,
+            thinking_off_params: resolved
+                .thinking_off_params_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
+            thinking_high_params: resolved
+                .thinking_high_params_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
         },
     };
 
@@ -400,6 +427,25 @@ pub async fn cancel_run(
     run.status = "interrupted".to_string();
     run.completed_at = Some(now());
     state.db.update_run(&run).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/runs/{id}/synthesize-now`: for a thinking_mode=max run, ask the
+/// sidecar to stop investigating and synthesize its partial results. Unlike
+/// cancel, the run keeps going through SYNTHESIZE -> COMPLETE.
+pub async fn synthesize_now_run(
+    State(state): State<SharedState>,
+    Path(run_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let run = state
+        .db
+        .get_run(&run_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("run {run_id} not found")))?;
+    if run.status != "running" {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    relay::run_synthesize_now(&state.supervisor, run_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
