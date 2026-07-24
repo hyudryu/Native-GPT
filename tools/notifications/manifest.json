@@ -1,0 +1,10 @@
+{
+  "id": "notifications",
+  "name": "Notifications",
+  "description": "User-facing notifications persisted to the host's notifications table: send (with urgency and optional action link/artifact), list unread or all, mark read, and dismiss. The host UI picks rows up from the database — delivery is via the notifications table, not a direct push channel.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "read",
+  "requires_approval": false
+}

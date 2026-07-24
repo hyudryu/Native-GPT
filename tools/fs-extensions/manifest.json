@@ -1,0 +1,10 @@
+{
+  "id": "fs-extensions",
+  "name": "File System Extensions",
+  "description": "Extended filesystem operations: stat with optional sha256, hash-verified copy, a reversible trash store (trash/restore/list/permanent-delete), binary range reads, and safe zip/tar.gz archive create/extract/list with zip-slip protection. requires_approval is true for the WHOLE folder because it contains destructive operations (trash_file, permanently_delete_file) — the manifest flag gates every tool in a folder, so even read-ish calls (stat, list) prompt; the trash store lives under the app data dir (no trash_records table exists in the schema; see tool.py for the design note).",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": true
+}

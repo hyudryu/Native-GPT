@@ -22,6 +22,7 @@ from agentgpt_runtime.protocol import (
     make_envelope,
     make_error,
 )
+from agentgpt_runtime.run_context import set_run_context
 from agentgpt_runtime.thinking import (
     next_thinking_attempt,
     process_cache,
@@ -147,12 +148,25 @@ def approval_allowed_tools(
     ``requires_approval: true``; an absent flag means no gate (the manifest
     schema's default). Names come from the loaded tool objects because Strands
     registers tools by function name (``shell-execute`` -> ``shell_execute``).
+
+    Multi-tool folders (a ``TOOL`` list in ``tool.py``) flatten the loaded
+    list, breaking the 1:1 zip with ``tool_ids``; the registry tags every
+    loaded tool object with its source folder id in ``agentgpt_tool_id``,
+    which is used instead when the lengths differ.
     """
+    if len(tools) == len(tool_ids):
+        pairs: list[tuple[str | None, Any]] = list(zip(tool_ids, tools, strict=True))
+    else:
+        pairs = [(getattr(t, "agentgpt_tool_id", None), t) for t in tools]
     allowed: list[str] = []
-    for tool_id, tool_obj in zip(tool_ids, tools, strict=True):
-        if manifests.get(tool_id, {}).get("requires_approval") is True:
+    for tool_id, tool_obj in pairs:
+        if tool_id is not None and manifests.get(tool_id, {}).get("requires_approval") is True:
             continue
-        allowed.append(getattr(tool_obj, "tool_name", None) or tool_id.replace("-", "_"))
+        name = getattr(tool_obj, "tool_name", None) or (
+            tool_id.replace("-", "_") if tool_id else None
+        )
+        if name:
+            allowed.append(name)
     return allowed
 
 
@@ -378,6 +392,10 @@ class ChatRuns:
     async def _stream(self, payload: RunStartPayload, request_id: str, active: ActiveRun) -> None:
         # Keep heavyweight/provider-specific imports off the startup path.
         from strands import Agent  # noqa: PLC0415
+
+        # Attribute tool writes (plans, goal contracts, ...) to this run.
+        # Context vars are task-local, so concurrent runs stay isolated.
+        set_run_context(payload.run_id, payload.conversation_id)
 
         if payload.thinking_mode == "max" and not payload.factory_mode:
             # Max mode: structured multi-agent orchestration (design spec §3).

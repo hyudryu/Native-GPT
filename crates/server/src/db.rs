@@ -49,6 +49,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0010_thinking_params",
         include_str!("../migrations/0010_thinking_params.sql"),
     ),
+    (
+        "0011_agent_intelligence",
+        include_str!("../migrations/0011_agent_intelligence.sql"),
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]

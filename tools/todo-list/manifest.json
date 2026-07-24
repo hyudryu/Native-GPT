@@ -1,0 +1,10 @@
+{
+  "id": "todo-list",
+  "name": "Todo List",
+  "description": "Planner and micro-goals: break a goal into verifiable steps, track status and dependencies, revise as work unfolds. Backed by the plans/plan_steps tables in the app database.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

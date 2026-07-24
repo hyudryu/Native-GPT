@@ -1,0 +1,12 @@
+{
+  "id": "git-tools",
+  "name": "Git Tools",
+  "description": "Git operations over the local repository via the git CLI: structured status/diff/log/show, branch create/checkout, stage/unstage/commit/restore, fetch/pull/push (outbound network to the user's own configured git remotes), merge/rebase/abort, and conflict list/resolve. APPROVAL CHOICE: requires_approval is false even though this folder mixes read ops (status/diff/log) with mutations (commit/push/reset) because the manifest flag gates EVERY tool in a folder and gating status/diff would make routine inspection unusable. Mutations are local and reversible (reflog; push uses --force-with-lease only, never --force). Docstrings flag the mutating tools; host-level per-op approval is a later stage. Network: fetch/pull/push egress to the user's configured remotes only; credentials in URLs are redacted from all output; GIT_TERMINAL_PROMPT=0 so git can never prompt for credentials.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false,
+  "network": "outbound",
+  "timeout_seconds": 30
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "plan-execute-verify",
+  "name": "Plan → Execute → Verify",
+  "description": "The core agentic loop: plan the work as todo-list steps with explicit success criteria, execute each step with the right tool, verify outcomes deterministically with goal-supervisor validators, revise the plan on failure, and only mark the work complete when every criterion passes.",
+  "version": "1.0.0",
+  "publisher": "Native GPT",
+  "type": "instructional",
+  "trusted": true,
+  "load_policy": "on_demand",
+  "prompt_file": "SKILL.md",
+  "tool_dependencies": ["todo-list", "goal-supervisor"],
+  "service_dependencies": ["planner", "goal-supervisor"],
+  "default_enabled": true
+}

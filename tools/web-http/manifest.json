@@ -1,0 +1,12 @@
+{
+  "id": "web-http",
+  "name": "Web & HTTP",
+  "description": "Outbound HTTP with a strict SSRF guard (shared tools/_lib/web_safety.py: http/https only, private/loopback/link-local/metadata IPs rejected, every redirect hop re-validated). web_find searches a fetched URL or a knowledge source by regex/literal pattern with context windows; http_request is a general verb client (GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS) with size caps, credential-in-URL rejection, and Authorization redaction in echoed data. Auth profiles are a planned later stage — this stage sends only the headers you pass explicitly.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "read",
+  "requires_approval": false,
+  "network": "outbound",
+  "timeout_seconds": 60
+}

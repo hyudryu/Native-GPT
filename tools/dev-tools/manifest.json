@@ -1,0 +1,11 @@
+{
+  "id": "dev-tools",
+  "name": "Dev Tools",
+  "description": "Run project development commands with sensible auto-detection: tests (pytest / cargo test / pnpm-or-npm test), linters (ruff / eslint / cargo clippy), formatters (ruff format / prettier / cargo fmt), plus inspect_build_errors which runs any build command and parses rustc, pytest, and tsc/eslint-style output into a structured error list. Commands run via the shell with a sanitized environment, capped output, and timeouts. REQUIRES user approval before each call — these run arbitrary project commands.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "execute",
+  "requires_approval": true,
+  "timeout_seconds": 300
+}

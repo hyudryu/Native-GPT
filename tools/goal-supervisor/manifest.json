@@ -1,0 +1,10 @@
+{
+  "id": "goal-supervisor",
+  "name": "Goal Supervisor",
+  "description": "Goal contracts with deterministic validation: declare success criteria for a task, record progress, evaluate completion locally, and manage recovery or blocked states. Backed by the goal_contracts tables in the app database.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

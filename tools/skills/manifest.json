@@ -1,0 +1,10 @@
+{
+  "id": "skills",
+  "name": "Skills Registry",
+  "description": "Instructional skills registry: discover, inspect, search, enable/disable, validate, install, and uninstall skill folders (skill.json manifest + SKILL.md prompt) under the repo's skills/ directory. Enablement state lives in skill_settings; installed skills are mirrored into the skills table. The model loads a skill's instructions on demand via skills_get.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "read",
+  "requires_approval": false
+}

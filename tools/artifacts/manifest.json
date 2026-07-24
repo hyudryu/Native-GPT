@@ -1,0 +1,10 @@
+{
+  "id": "artifacts",
+  "name": "Artifact Store",
+  "description": "Durable artifact store: create, read, list, rename, preview, and soft-delete artifacts (files/blobs the agent produces) backed by content-addressed blob storage and the host's artifacts table. Text artifacts support windowed reads; binary artifacts support capped base64 range reads. The goal-supervisor's artifact_exists validator reads these rows.",
+  "version": "1.0.0",
+  "trusted": true,
+  "default_enabled": true,
+  "risk": "write",
+  "requires_approval": false
+}

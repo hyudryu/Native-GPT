@@ -14,108 +14,35 @@ rather than raising.
 
 from __future__ import annotations
 
-import ipaddress
-import socket
+import importlib.util
+from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 from strands import tool
+
+# The SSRF guard is shared with tools/web-http via `tools/_lib/web_safety.py`.
+# Loaded by file path (the runtime imports each tool.py as a standalone
+# module, so package imports across folders are unavailable). Names are
+# re-exported so existing callers/tests keep working unchanged.
+_LIB_PATH = Path(__file__).resolve().parent.parent / "_lib" / "web_safety.py"
+_spec = importlib.util.spec_from_file_location("agentgpt_tools_web_safety", _LIB_PATH)
+assert _spec is not None and _spec.loader is not None
+_web_safety = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_web_safety)
+
+SsrfError = _web_safety.SsrfError
+assert_safe_url = _web_safety.assert_safe_url
+is_forbidden_ip = _web_safety.is_forbidden_ip
+_host_ips = _web_safety.host_ips
+_default_resolver = _web_safety.default_resolver
 
 USER_AGENT = "AgentGPT/1.0 (web-fetch tool)"
 TIMEOUT_SECONDS = 15.0
 MAX_BYTES = 2 * 1024 * 1024  # 2 MB cap on response bodies
 
 ExtractMode = Literal["markdown", "text", "raw"]
-
-
-class SsrfError(ValueError):
-    """Raised when a URL host resolves to a forbidden IP."""
-
-
-def _host_ips(host: str, resolver: Any = None) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
-    """Resolve `host` to IP addresses using `resolver(host)` (returns list of str IPs).
-
-    `resolver` is injectable so tests can stub DNS. Default uses `socket.getaddrinfo`.
-    """
-    if resolver is None:
-        resolver = _default_resolver
-    infos = resolver(host)
-    ips: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
-    for raw in infos:
-        try:
-            ips.append(ipaddress.ip_address(raw))
-        except ValueError:
-            continue
-    return ips
-
-
-def _default_resolver(host: str) -> list[str]:
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return []
-    # Each entry: (family, type, proto, canonname, sockaddr). sockaddr is
-    # (ip, port) for IPv4 or (ip, port, flowinfo, scope_id) for IPv6.
-    return [info[4][0] for info in infos]
-
-
-def is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """True if the IP is private, loopback, link-local, multicast, or unspecified.
-
-    Mirrors `unsafe_ip` in crates/server/src/knowledge.rs.
-    """
-    if isinstance(ip, ipaddress.IPv4Address):
-        return (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_unspecified
-            or str(ip) == "169.254.169.254"  # cloud metadata endpoint
-        )
-    # IPv6
-    return (
-        ip.is_loopback
-        or ip.is_unspecified
-        or ip.is_multicast
-        or (ip.segments()[0] & 0xFE00) == 0xFC00  # unique local fc00::/7
-        or (ip.segments()[0] & 0xFFC0) == 0xFE80  # link-local fe80::/10
-    )
-
-
-def assert_safe_url(url: str, resolver: Any = None) -> str:
-    """Validate `url` and reject any host resolving to a forbidden IP.
-
-    Returns the URL unchanged if it passes. Raises SsrfError otherwise.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise SsrfError(f"only http/https URLs are allowed (got {parsed.scheme!r})")
-    host = parsed.hostname
-    if not host:
-        raise SsrfError("URL has no host")
-    # Literal IPs in the URL (e.g. http://127.0.0.1/) are checked directly.
-    try:
-        literal = ipaddress.ip_address(host)
-    except ValueError:
-        literal = None
-    if literal is not None:
-        if is_forbidden_ip(literal):
-            raise SsrfError(f"IP address {host} is in a forbidden range")
-        return url
-    ips = _host_ips(host, resolver=resolver)
-    if not ips:
-        # Could not resolve — let httpx fail rather than silently allowing it.
-        # If the host later resolves to something forbidden, httpx will be the
-        # one making the request, which is what we're trying to avoid; so we
-        # reject up front.
-        raise SsrfError(f"could not resolve host {host}")
-    for ip in ips:
-        if is_forbidden_ip(ip):
-            raise SsrfError(f"host {host} resolves to forbidden IP {ip}")
-    return url
 
 
 def _html_to_markdown(html: str, base_url: str) -> str:

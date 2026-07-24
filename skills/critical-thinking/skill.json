@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "critical-thinking",
+  "name": "Critical Thinking",
+  "description": "A disciplined reasoning workflow for non-trivial tasks: find the real objective, define verifiable success criteria, surface hidden constraints, separate facts from assumptions, break work into verifiable steps (tracked with the todo-list tools), prefer primary sources, test assumptions, and state uncertainty transparently before declaring completion.",
+  "version": "1.0.0",
+  "publisher": "Native GPT",
+  "type": "instructional",
+  "trusted": true,
+  "load_policy": "on_demand",
+  "prompt_file": "SKILL.md",
+  "tool_dependencies": ["todo-list"],
+  "service_dependencies": ["planner"],
+  "default_enabled": true
+}
