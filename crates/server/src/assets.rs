@@ -28,51 +28,6 @@ pub fn assets_dir(repo_root: &std::path::Path) -> PathBuf {
     repo_root.join("app-data").join("assets")
 }
 
-/// Write asset bytes to disk and return the storage-relative path.
-///
-/// The filename is `<asset_id>.<ext>` to guarantee uniqueness; the full path
-/// is `<assets_dir>/<asset_id>.<ext>`. `storage_path` stored in the DB is
-/// relative to `assets_dir`.
-pub fn write_asset_bytes(
-    dir: &std::path::Path,
-    asset_id: &str,
-    bytes: &[u8],
-    mime_type: Option<&str>,
-) -> Result<(String, PathBuf), std::io::Error> {
-    std::fs::create_dir_all(dir)?;
-    // Reject asset_ids that contain path separators or traversal sequences.
-    // Current callers generate UUIDs, but this prevents directory escape if a
-    // future caller passes user-supplied input.
-    if asset_id.contains('/') || asset_id.contains('\\') || asset_id.contains("..") {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "asset_id contains invalid characters",
-        ));
-    }
-    let ext = mime_type.and_then(mime_to_ext).unwrap_or("bin");
-    let filename = format!("{asset_id}.{ext}");
-    let abs = dir.join(&filename);
-    std::fs::write(&abs, bytes)?;
-    Ok((filename, abs))
-}
-
-/// Best-effort MIME → extension mapping for the asset kinds we produce.
-fn mime_to_ext(mime: &str) -> Option<&str> {
-    match mime.split(';').next().unwrap_or("").trim() {
-        "image/png" => Some("png"),
-        "image/jpeg" => Some("jpg"),
-        "image/webp" => Some("webp"),
-        "image/gif" => Some("gif"),
-        "video/mp4" => Some("mp4"),
-        "video/webm" => Some("webm"),
-        "audio/mpeg" | "audio/mp3" => Some("mp3"),
-        "audio/wav" | "audio/wave" | "audio/x-wav" => Some("wav"),
-        "audio/ogg" => Some("ogg"),
-        "audio/flac" => Some("flac"),
-        _ => None,
-    }
-}
-
 /// `GET /api/assets/{id}` — serve a generated asset's bytes (auth-gated).
 pub async fn serve_asset(
     State(state): State<SharedState>,
@@ -142,32 +97,4 @@ pub async fn get_asset_meta(
         "mime_type": row.mime_type,
         "created_at": row.created_at,
     })))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mime_to_ext_maps_common_types() {
-        assert_eq!(mime_to_ext("image/png"), Some("png"));
-        assert_eq!(mime_to_ext("image/jpeg"), Some("jpg"));
-        assert_eq!(mime_to_ext("audio/mpeg"), Some("mp3"));
-        assert_eq!(mime_to_ext("video/mp4"), Some("mp4"));
-        assert_eq!(mime_to_ext("image/png; charset=utf-8"), Some("png"));
-        assert_eq!(mime_to_ext("application/octet-stream"), None);
-    }
-
-    #[test]
-    fn write_and_read_asset_bytes() {
-        let dir =
-            std::env::temp_dir().join(format!("agentgpt-assets-test-{}", uuid::Uuid::now_v7()));
-        let (rel, abs) = write_asset_bytes(&dir, "test-id", b"hello", Some("image/png")).unwrap();
-        assert!(rel.starts_with("test-id."));
-        assert!(abs.is_file());
-        let written = std::fs::read(&abs).unwrap();
-        assert_eq!(written, b"hello");
-        assert!(abs.extension().unwrap() == "png");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

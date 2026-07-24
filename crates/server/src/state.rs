@@ -37,6 +37,9 @@ pub struct AppState {
     /// Host-originated broadcast envelopes (e.g. `data.changed`), forwarded
     /// to every WS client alongside supervisor events.
     pub host_events: broadcast::Sender<Envelope>,
+    /// Native GPT Browser orchestration (ADR-0009). Cheap to construct;
+    /// Chromium starts lazily on first use.
+    pub browser: crate::browser::manager::BrowserManager,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -73,9 +76,10 @@ fn make_test_state(token: &str, sidecar: agentgpt_supervisor::SupervisorConfig) 
         repo_root: dir.clone(),
         supervisor: Supervisor::new(sidecar),
         telemetry: Telemetry::new(),
-        db,
+        db: db.clone(),
         secrets: secrets.clone(),
         host_events: broadcast::channel(HOST_EVENTS_CAPACITY).0,
+        browser: crate::browser::manager::BrowserManager::new(db, dir.clone(), 0),
     });
     TestState {
         state,

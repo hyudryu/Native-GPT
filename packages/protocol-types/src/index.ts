@@ -6,6 +6,11 @@
 
 export const PROTOCOL_VERSION = "1.0" as const;
 
+// Browser stream protocol (spec §9.3): a separate WebSocket from the chat
+// envelope protocol, so these types live in their own module and are
+// re-exported here without joining the envelope union.
+export * from "./browser";
+
 export interface Envelope<T = Record<string, unknown>> {
   protocol: typeof PROTOCOL_VERSION;
   type: string;

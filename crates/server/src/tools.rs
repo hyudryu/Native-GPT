@@ -186,8 +186,8 @@ fn manifests(repo_root: &Path) -> Result<Vec<(ToolManifest, String)>, ApiError> 
         // must not take down the entire tools list. Skip it with a warning so
         // the user can still see and manage their other tools.
         let manifest_result: Result<ToolManifest, _> = (|| {
-            let raw = std::fs::read_to_string(path.join("manifest.json"))
-                .map_err(|e| e.to_string())?;
+            let raw =
+                std::fs::read_to_string(path.join("manifest.json")).map_err(|e| e.to_string())?;
             serde_json::from_str::<ToolManifest>(&raw).map_err(|e| e.to_string())
         })();
         let manifest = match manifest_result {

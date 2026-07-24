@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgpt.local/schemas/browser-stream.json",
+  "title": "Native GPT Browser Stream Protocol",
+  "description": "Message catalog for the dedicated browser WebSocket (/api/browser/stream, spec §9.3). These messages do NOT travel over the chat /ws envelope protocol — the browser stream is a separate authenticated WebSocket whose text frames are the JSON messages below and whose binary frames are screencast images with header [version(1)][frame_id(8)][width(4)][height(4)][format(1)] (big-endian). Field names mirror crates/server/src/browser/protocol.rs serde output exactly: payload structs are camelCase; the frame.ack and tab.activate command fields stay snake_case.",
+  "type": "object",
+  "$defs": {
+    "BrowserTab": {
+      "type": "object",
+      "required": ["id", "title", "url", "loading", "canGoBack", "canGoForward", "internal"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "faviconUrl": { "type": "string" },
+        "loading": { "type": "boolean" },
+        "canGoBack": { "type": "boolean" },
+        "canGoForward": { "type": "boolean" },
+        "internal": { "type": "boolean", "description": "Internal targets (e.g. the Page Agent Hub tab) hidden from the tab strip" }
+      },
+      "additionalProperties": false
+    },
+    "BrowserTaskState": {
+      "type": "object",
+      "required": ["id", "description", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "runId": { "type": "string" },
+        "toolCallId": { "type": "string" },
+        "description": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["awaiting_approval", "starting", "running", "paused_for_user", "stopping", "completed", "failed", "cancelled"]
+        },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "activity": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "PendingApproval": {
+      "type": "object",
+      "required": ["id", "capability", "description", "createdAt"],
+      "properties": {
+        "id": { "type": "string" },
+        "capability": {
+          "type": "string",
+          "enum": ["navigate_public_web", "navigate_private_network", "upload_file", "download_file", "submit_form", "send_message", "publish_content", "delete_content", "financial_transaction", "credential_entry"]
+        },
+        "origin": { "type": "string" },
+        "description": { "type": "string" },
+        "taskId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "BrowserState": {
+      "type": "object",
+      "description": "Snapshot served by GET /api/browser/state and browser.state events (spec §18).",
+      "required": ["installed", "installStatus", "processStatus", "profileId", "panelMode", "panelWidth", "connected", "tabs", "manualControlEnabled", "remoteViewerCount", "pendingApprovals"],
+      "properties": {
+        "installed": { "type": "boolean" },
+        "installStatus": { "type": "string", "enum": ["not_installed", "downloading", "verifying", "extracting", "ready", "error"] },
+        "installError": { "type": "string" },
+        "installProgress": { "type": "number" },
+        "installedVersion": { "type": "string" },
+        "processStatus": { "type": "string", "enum": ["stopped", "starting", "running", "stopping", "crashed"] },
+        "profileId": { "type": "string" },
+        "panelMode": { "type": "string", "enum": ["hidden", "compact", "split", "expanded", "focus"] },
+        "panelWidth": { "type": "integer", "minimum": 0 },
+        "previousPanelWidth": { "type": "integer", "minimum": 0 },
+        "connected": { "type": "boolean" },
+        "activeTabId": { "type": "string" },
+        "tabs": { "type": "array", "items": { "$ref": "#/$defs/BrowserTab" } },
+        "task": { "$ref": "#/$defs/BrowserTaskState" },
+        "manualControlEnabled": { "type": "boolean" },
+        "remoteViewerCount": { "type": "integer", "minimum": 0 },
+        "pendingApprovals": { "type": "array", "items": { "$ref": "#/$defs/PendingApproval" } }
+      },
+      "additionalProperties": false
+    },
+
+    "browser.state": {
+      "type": "object",
+      "description": "Server -> viewer: full state snapshot (sent on connect and on coarse state changes).",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.state" },
+        "payload": { "$ref": "#/$defs/BrowserState" }
+      },
+      "additionalProperties": false
+    },
+    "browser.tab.created": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.tab.created" },
+        "payload": { "$ref": "#/$defs/BrowserTab" }
+      },
+      "additionalProperties": false
+    },
+    "browser.tab.updated": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.tab.updated" },
+        "payload": { "$ref": "#/$defs/BrowserTab" }
+      },
+      "additionalProperties": false
+    },
+    "browser.tab.closed": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.tab.closed" },
+        "payload": {
+          "type": "object",
+          "required": ["id"],
+          "properties": { "id": { "type": "string" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.navigation": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.navigation" },
+        "payload": {
+          "type": "object",
+          "required": ["url"],
+          "properties": { "url": { "type": "string" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.task.started": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.task.started" },
+        "payload": { "$ref": "#/$defs/BrowserTaskState" }
+      },
+      "additionalProperties": false
+    },
+    "browser.task.activity": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.task.activity" },
+        "payload": {
+          "type": "object",
+          "required": ["taskId", "activity"],
+          "properties": {
+            "taskId": { "type": "string" },
+            "activity": { "type": "string" },
+            "url": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.task.finished": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.task.finished" },
+        "payload": {
+          "type": "object",
+          "required": ["taskId", "success"],
+          "properties": {
+            "taskId": { "type": "string" },
+            "success": { "type": "boolean" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.task.failed": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.task.failed" },
+        "payload": {
+          "type": "object",
+          "required": ["taskId", "errorCode"],
+          "properties": {
+            "taskId": { "type": "string" },
+            "errorCode": { "type": "string", "description": "Stable spec §7.3 code, e.g. TASK_CANCELLED, BROWSER_CRASHED" },
+            "errorMessage": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.file_chooser": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.file_chooser" },
+        "payload": {
+          "type": "object",
+          "properties": { "sessionId": { "type": "string" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.download": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.download" },
+        "payload": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "profileId": { "type": "string" },
+            "filename": { "type": "string" },
+            "status": { "type": "string", "enum": ["in_progress", "completed", "cancelled"] },
+            "sourceUrl": { "type": "string" },
+            "sizeBytes": { "type": "integer" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser.crashed": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "browser.crashed" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "pid": { "type": "integer" },
+            "sessionId": { "type": "string" },
+            "target": { "type": "boolean" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MouseInput": {
+      "type": "object",
+      "required": ["kind", "x", "y"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["move", "down", "up"] },
+        "x": { "type": "number", "description": "Panel coordinates in CSS pixels" },
+        "y": { "type": "number" },
+        "button": { "type": "string", "enum": ["none", "left", "middle", "right"], "default": "none" },
+        "clickCount": { "type": "integer", "minimum": 0, "default": 0 },
+        "modifiers": { "type": "integer", "minimum": 0, "default": 0, "description": "Modifier bitmask (Alt=1, Ctrl=2, Meta=4, Shift=8), CDP convention" }
+      },
+      "additionalProperties": false
+    },
+    "WheelInput": {
+      "type": "object",
+      "required": ["x", "y", "deltaX", "deltaY"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "deltaX": { "type": "number" },
+        "deltaY": { "type": "number" },
+        "modifiers": { "type": "integer", "minimum": 0, "default": 0 }
+      },
+      "additionalProperties": false
+    },
+    "KeyInput": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "description": "rawKeyDown | keyDown | keyUp | char" },
+        "key": { "type": "string" },
+        "code": { "type": "string" },
+        "text": { "type": "string" },
+        "windowsVirtualKeyCode": { "type": "integer", "minimum": 0 },
+        "modifiers": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "TextInput": {
+      "type": "object",
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "ViewportSize": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 },
+        "deviceScaleFactor": { "type": "number", "default": 1.0, "description": "Device pixel ratio of the viewer surface" }
+      },
+      "additionalProperties": false
+    },
+
+    "input.mouse": {
+      "type": "object",
+      "description": "Viewer -> server command.",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "input.mouse" },
+        "payload": { "$ref": "#/$defs/MouseInput" }
+      },
+      "additionalProperties": false
+    },
+    "input.wheel": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "input.wheel" },
+        "payload": { "$ref": "#/$defs/WheelInput" }
+      },
+      "additionalProperties": false
+    },
+    "input.key": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "input.key" },
+        "payload": { "$ref": "#/$defs/KeyInput" }
+      },
+      "additionalProperties": false
+    },
+    "input.text": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "input.text" },
+        "payload": { "$ref": "#/$defs/TextInput" }
+      },
+      "additionalProperties": false
+    },
+    "viewport.resize": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "const": "viewport.resize" },
+        "payload": { "$ref": "#/$defs/ViewportSize" }
+      },
+      "additionalProperties": false
+    },
+    "frame.ack": {
+      "type": "object",
+      "description": "Viewer -> server: acknowledges a screencast frame. Snake-case field mirrors the Rust ClientCommand enum (no rename_all on variant fields).",
+      "required": ["type", "frame_id"],
+      "properties": {
+        "type": { "const": "frame.ack" },
+        "frame_id": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tab.activate": {
+      "type": "object",
+      "description": "Viewer -> server: switch the active tab. Snake-case field mirrors the Rust ClientCommand enum.",
+      "required": ["type", "tab_id"],
+      "properties": {
+        "type": { "const": "tab.activate" },
+        "tab_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

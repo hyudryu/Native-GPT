@@ -5,6 +5,7 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import { initAuth } from "./lib/auth";
 import { startSocket } from "./lib/ws";
+import { initRunRouter } from "./lib/runStore";
 import "./index.css";
 
 // Service worker: update immediately on load; autoUpdate reloads when a new
@@ -21,6 +22,9 @@ const queryClient = new QueryClient({
     queries: { retry: 1 },
   },
 });
+
+// 3) Route all run.* WS events to the per-conversation live-run store.
+initRunRouter(queryClient);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

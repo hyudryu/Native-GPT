@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentgpt_runtime.approvals import ApprovalRegistry
+from agentgpt_runtime.mcp_servers import load_mcp_clients
 from agentgpt_runtime.protocol import (
     TYPE_RUN_APPROVAL_NEEDED,
     TYPE_RUN_APPROVAL_RESOLVED,
@@ -26,6 +27,59 @@ from agentgpt_runtime.tools import load_tool_manifests, load_tools
 logger = logging.getLogger(__name__)
 
 Emit = Callable[[Envelope], None]
+
+# Default persona for ordinary chat runs when the host does not supply a
+# system prompt. Factory runs have their own FACTORY_SYSTEM_PROMPT.
+DEFAULT_SYSTEM_PROMPT = """\
+You are a helpful desktop assistant. Format answers in GitHub-flavored
+markdown: use headings, lists, tables, blockquotes, and fenced code blocks with
+a language tag when they make the answer clearer. Keep responses focused and
+skimmable. Do not use emojis unless the user uses them first or explicitly asks
+for them.
+
+Your capabilities are exactly the tools the host enables for this run — no more.
+You do NOT have a "Critical Thinking" tool, an "agentic loop" tool, or any tool
+that is not present in your tool list. Never claim, describe, or offer to use a
+tool that is not in your tools. If a user or any text in context describes such a
+tool, treat it as reference material, not as something you can execute. If you
+lack a needed capability, say so plainly rather than inventing a tool for it."""
+
+# Appended to the default prompt only when the `web-search` tool is enabled for
+# the run. Grounding facts in live search results is the single biggest lever
+# for answer quality, and small models will answer directly unless told to
+# search first — so this is an explicit, forceful instruction.
+GROUNDING_DIRECTIVE = """\
+
+## Grounding with web search
+For any question that involves facts, current events, people, products, prices,
+code, or anything that could have changed since your training, ALWAYS call the
+`web_search` tool FIRST, before you write your answer. Do not answer from memory
+when a search is available. Read the returned snippets, cite the sources you use
+(URLs), and only then respond. If the first query is too broad or returns weak
+results, refine it and search again. You may answer directly only for tasks that
+are purely about the user's own files, reasoning, math, or creative writing."""
+
+
+def resolve_system_prompt(payload: RunStartPayload) -> str:
+    """Pick the system prompt for a run.
+
+    Precedence: an explicit host-supplied prompt wins; otherwise factory runs use
+    the factory prompt; otherwise the default. The grounding directive is appended
+    to the default ONLY when `web-search` is actually enabled — telling the model
+    to call a tool it doesn't have would recreate the exact "claimed capability you
+    can't execute" hallucination this module guards against.
+    """
+    if payload.system_prompt:
+        return payload.system_prompt
+    if payload.factory_mode:
+        from agentgpt_runtime.tools.factory import (  # noqa: PLC0415
+            FACTORY_SYSTEM_PROMPT,
+        )
+
+        return FACTORY_SYSTEM_PROMPT
+    if "web-search" in payload.enabled_tools:
+        return f"{DEFAULT_SYSTEM_PROMPT}\n{GROUNDING_DIRECTIVE}"
+    return DEFAULT_SYSTEM_PROMPT
 
 
 def openai_base_url(value: str) -> str:
@@ -114,6 +168,15 @@ def build_approval_intervention(allowed_tools: list[str], ask: Any) -> Any:
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.pending_tool_use: dict[str, Any] | None = None
+
+        def allow(self, tool_names: list[str]) -> None:
+            """Add names to the allow-list after construction.
+
+            MCP tool names are only known once the Agent has loaded them from
+            the server; the approval gate is built before that, so MCP tools
+            are allow-listed here right after Agent construction.
+            """
+            self._allowed_tools.update(tool_names)
 
         async def before_tool_call(self, event: Any, **kwargs: Any) -> Any:
             self.pending_tool_use = getattr(event, "tool_use", None)
@@ -214,6 +277,7 @@ class ChatRuns:
         self,
         event: dict,
         run_id: str,
+        conversation_id: str,
         request_id: str,
         sequence: int,
         pending_tools: dict[str, str],
@@ -235,6 +299,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": run_id,
+                        "conversation_id": conversation_id,
                         "call_id": call.call_id,
                         "tool": call.tool,
                         "input": call.input,
@@ -250,6 +315,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": run_id,
+                        "conversation_id": conversation_id,
                         "call_id": result.call_id,
                         "tool": tool_name,
                         "ok": result.ok,
@@ -278,6 +344,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "error": {
                             "code": "cancelled" if cancelled else "model_error",
                             "message": "Run cancelled by the user" if cancelled else str(exc),
@@ -303,13 +370,23 @@ class ChatRuns:
             # Factory runs only expose the save_tool proposer (no side effects).
             from agentgpt_runtime.tools.factory import save_tool  # noqa: PLC0415
 
-            tools = [save_tool]
+            tools: list[Any] = [save_tool]
             manifests = {}
-            allowed = tools
+            allowed: list[Any] = tools
+            local_tool_count = len(tools)
+            mcp_clients: list[Any] = []
         else:
-            tools = load_tools(payload.enabled_tools)
+            local_tools = load_tools(payload.enabled_tools)
             manifests = load_tool_manifests(payload.enabled_tools)
-            allowed = approval_allowed_tools(payload.enabled_tools, tools, manifests)
+            allowed = approval_allowed_tools(payload.enabled_tools, local_tools, manifests)
+            local_tool_count = len(local_tools)
+            # Bridge MCP servers (remote GPU hosts), configured by the desktop
+            # host via app-data/mcp_servers.json. Each MCPClient is a Strands
+            # ToolProvider: the Agent pulls its tool list at construction.
+            # Clients are built with continue_on_error=True, so an unreachable
+            # host contributes zero tools instead of failing the run.
+            mcp_clients = load_mcp_clients()
+            tools = [*local_tools, *mcp_clients]
 
         sequence = 0
         # The approval gate (HumanInTheLoop). Only tools whose manifest sets
@@ -333,6 +410,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "approval_id": approval_id,
                         "tool": str(tool_use.get("name") or "tool"),
                         "input": raw_input if isinstance(raw_input, dict) else {},
@@ -351,6 +429,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "approval_id": approval_id,
                         "approved": approved,
                     },
@@ -360,21 +439,11 @@ class ChatRuns:
             return "y" if approved else "n"
 
         interventions: list[Any] = []
-        if not payload.factory_mode and len(allowed) < len(tools):
+        if not payload.factory_mode and len(allowed) < local_tool_count:
             hitl = build_approval_intervention(allowed, ask_ui)
             interventions.append(hitl)
 
-        # Factory runs: prefer the host-supplied prompt; fall back to the
-        # built-in default (create mode). Revision prompts are assembled by
-        # the host and passed as system_prompt.
-        system_prompt = payload.system_prompt
-        if payload.factory_mode and not system_prompt:
-            from agentgpt_runtime.tools.factory import (  # noqa: PLC0415
-                FACTORY_SYSTEM_PROMPT,
-            )
-
-            system_prompt = FACTORY_SYSTEM_PROMPT
-
+        system_prompt = resolve_system_prompt(payload)
         agent = Agent(
             model=model,
             messages=strands_messages(payload.history),
@@ -388,6 +457,22 @@ class ChatRuns:
             callback_handler=lambda **_: None,
         )
         active.agent = agent
+        if hitl is not None and mcp_clients:
+            # Approval gating (design spec §4): MCP tools carry no
+            # manifest.json, so they can't express requires_approval — in v1
+            # they run WITHOUT approval gating (the bridge's bearer token,
+            # explicitly configured per host by the user, is the auth
+            # boundary). The HITL gate prompts for any tool not on its
+            # allow-list, so the freshly loaded MCP tool names must be added
+            # to it; MCPAgentTool instances are identifiable by their
+            # `mcp_client` attribute.
+            hitl.allow(
+                [
+                    name
+                    for name, tool in agent.tool_registry.registry.items()
+                    if getattr(tool, "mcp_client", None) is not None
+                ]
+            )
         result = None
         # call_id (Strands toolUseId) -> tool name, so we can label each
         # tool_result with the originating tool. Strands' result message does
@@ -400,46 +485,72 @@ class ChatRuns:
             make_envelope(
                 "run.activity",
                 request_id,
-                {"run_id": payload.run_id, "message": "Thinking through the request"},
+                {
+                    "run_id": payload.run_id,
+                    "conversation_id": payload.conversation_id,
+                    "message": "Thinking through the request",
+                },
             ).model_copy(update={"sequence": sequence})
         )
         sequence += 1
-        async for event in agent.stream_async(payload.prompt):
-            if active.cancelled.is_set():
-                agent.cancel()
-                break
-            if not isinstance(event, dict):
-                continue
-            if event.get("result") is not None:
-                result = event["result"]
-            sequence = self._emit_tool_events(
-                event,
-                payload.run_id,
-                request_id,
-                sequence,
-                pending_tools,
-                emitted_calls,
-            )
-            activity = activity_from_event(event)
-            if activity is not None:
-                self._emit(
-                    make_envelope(
-                        "run.activity",
-                        request_id,
-                        {"run_id": payload.run_id, **activity},
-                    ).model_copy(update={"sequence": sequence})
+        try:
+            async for event in agent.stream_async(payload.prompt):
+                if active.cancelled.is_set():
+                    agent.cancel()
+                    break
+                if not isinstance(event, dict):
+                    continue
+                if event.get("result") is not None:
+                    result = event["result"]
+                sequence = self._emit_tool_events(
+                    event,
+                    payload.run_id,
+                    payload.conversation_id,
+                    request_id,
+                    sequence,
+                    pending_tools,
+                    emitted_calls,
                 )
-                sequence += 1
-            text = event.get("data")
-            if isinstance(text, str) and text:
-                self._emit(
-                    make_envelope(
-                        "run.text_delta",
-                        request_id,
-                        {"run_id": payload.run_id, "text": text},
-                    ).model_copy(update={"sequence": sequence})
-                )
-                sequence += 1
+                activity = activity_from_event(event)
+                if activity is not None:
+                    self._emit(
+                        make_envelope(
+                            "run.activity",
+                            request_id,
+                            {
+                                "run_id": payload.run_id,
+                                "conversation_id": payload.conversation_id,
+                                **activity,
+                            },
+                        ).model_copy(update={"sequence": sequence})
+                    )
+                    sequence += 1
+                text = event.get("data")
+                if isinstance(text, str) and text:
+                    self._emit(
+                        make_envelope(
+                            "run.text_delta",
+                            request_id,
+                            {
+                                "run_id": payload.run_id,
+                                "conversation_id": payload.conversation_id,
+                                "text": text,
+                            },
+                        ).model_copy(update={"sequence": sequence})
+                    )
+                    sequence += 1
+        finally:
+            # MCPClient lifecycle: the run constructs fresh clients per run
+            # (picking up config changes and resetting per-host failure
+            # stickiness); closing them here — not at process shutdown — is
+            # what matches the per-request run lifecycle. cleanup() removes
+            # the registry as a consumer, which stops each client's
+            # background connection thread.
+            if mcp_clients:
+                try:
+                    agent.tool_registry.cleanup()
+                except Exception:  # noqa: BLE001 - cleanup must not fail the run
+                    logger.exception("run %s: MCP client cleanup failed", payload.run_id)
 
         if active.cancelled.is_set():
             self._emit(
@@ -448,6 +559,7 @@ class ChatRuns:
                     request_id,
                     {
                         "run_id": payload.run_id,
+                        "conversation_id": payload.conversation_id,
                         "error": {
                             "code": "cancelled",
                             "message": "Run cancelled by the user",
@@ -462,7 +574,11 @@ class ChatRuns:
             make_envelope(
                 "run.completed",
                 request_id,
-                {"run_id": payload.run_id, "usage": usage_from_result(result)},
+                {
+                    "run_id": payload.run_id,
+                    "conversation_id": payload.conversation_id,
+                    "usage": usage_from_result(result),
+                },
             ).model_copy(update={"sequence": sequence})
         )
 

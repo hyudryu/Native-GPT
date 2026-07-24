@@ -8,6 +8,7 @@ import {
   type RemoteHost,
 } from "../../lib/remoteHosts";
 import { dialogBackdropCls, dialogPopupCls } from "../../components/dialogStyles";
+import Toggle from "../../components/Toggle";
 
 const inputCls =
   "min-h-11 w-full rounded-xl border border-border bg-surface-1 px-3 text-sm text-fg placeholder:text-fg-subtle";
@@ -180,15 +181,14 @@ export default function RemoteHostFormDialog({
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-sm text-fg-muted">
-                <input
-                  type="checkbox"
+              <div className="flex items-center gap-2 text-sm text-fg-muted">
+                <Toggle
+                  label="Verify TLS certificates"
                   checked={values.tls_verify}
-                  onChange={(e) => set("tls_verify", e.target.checked)}
-                  className="size-4 rounded border-border"
+                  onCheckedChange={(next) => set("tls_verify", next)}
                 />
                 Verify TLS certificates
-              </label>
+              </div>
             </div>
 
             <p className="mt-3 text-xs text-fg-subtle">

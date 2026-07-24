@@ -3,6 +3,8 @@ import { getToken } from "../lib/auth";
 import EndpointsSection from "../features/endpoints/EndpointsSection";
 import RemoteHostsSection from "../features/remote-hosts/RemoteHostsSection";
 import AppearanceSection from "../features/settings/AppearanceSection";
+import UpdatesSection from "../features/settings/UpdatesSection";
+import BrowserSection from "../features/browser/BrowserSection";
 
 function maskToken(token: string | null): string {
   if (!token) return "Not paired";
@@ -23,6 +25,8 @@ export default function SettingsPage() {
         <RemoteHostsSection />
 
         <AppearanceSection />
+
+        <BrowserSection />
 
         <section
           aria-labelledby="network-pairing"
@@ -47,6 +51,8 @@ export default function SettingsPage() {
             and token, rotate tokens, and manage paired devices.
           </p>
         </section>
+
+        <UpdatesSection />
       </div>
     </div>
   );

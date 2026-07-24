@@ -2,7 +2,6 @@ import {
   BarChart3,
   Brain,
   DatabaseZap,
-  RefreshCw,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -21,5 +20,4 @@ export const appsRegistry: AppEntry[] = [
   { id: "brain", name: "Brain", description: "App-wide agent knowledge", icon: Brain, href: "/apps/brain" },
   { id: "knowledge-dump", name: "Knowledge Dump", description: "Add files, URLs, and notes", icon: DatabaseZap, href: "/apps/knowledge-dump" },
   { id: "tools", name: "Tools", description: "Manage Strands tools", icon: Wrench, href: "/apps/tools" },
-  { id: "updates", name: "Updates", description: "Check GitHub releases", icon: RefreshCw, href: "/apps/updates" },
 ];

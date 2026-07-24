@@ -89,4 +89,106 @@ describe("protocol schemas", () => {
     expect(definition.properties?.factory_mode?.type).toBe("boolean");
     expect(definition.required ?? []).not.toContain("factory_mode");
   });
+
+  it("does not carry browser stream events (they use a dedicated WebSocket)", () => {
+    const messages = schema("messages.json") as {
+      $defs: Record<string, unknown>;
+    };
+    const envelope = schema("envelope.json") as { properties?: Record<string, unknown> };
+    for (const name of Object.keys(messages.$defs)) {
+      expect(name.startsWith("browser.")).toBe(false);
+      expect(name.startsWith("input.")).toBe(false);
+    }
+    expect(envelope).toHaveProperty("$schema");
+  });
+});
+
+describe("browser stream schema", () => {
+  const SERVER_EVENTS = [
+    "browser.state",
+    "browser.tab.created",
+    "browser.tab.updated",
+    "browser.tab.closed",
+    "browser.navigation",
+    "browser.task.started",
+    "browser.task.activity",
+    "browser.task.finished",
+    "browser.task.failed",
+    "browser.file_chooser",
+    "browser.download",
+    "browser.crashed",
+  ];
+  const CLIENT_COMMANDS = [
+    "input.mouse",
+    "input.wheel",
+    "input.key",
+    "input.text",
+    "viewport.resize",
+    "frame.ack",
+    "tab.activate",
+  ];
+
+  it("is a valid JSON object with $defs", () => {
+    expect(schema("browser-stream.json")).toHaveProperty("$defs");
+  });
+
+  it("defines every server event and client command from spec §9.3", () => {
+    const stream = schema("browser-stream.json") as {
+      $defs: Record<string, { properties?: Record<string, { const?: string }> }>;
+    };
+    for (const name of [...SERVER_EVENTS, ...CLIENT_COMMANDS]) {
+      expect(stream.$defs).toHaveProperty(name);
+      // Tagged-union shape: each message pins its own `type` const.
+      expect(stream.$defs[name]?.properties?.type?.const).toBe(name);
+    }
+  });
+
+  it("mirrors the Rust serde field names for client commands", () => {
+    const stream = schema("browser-stream.json") as {
+      $defs: Record<
+        string,
+        { properties?: Record<string, unknown>; required?: string[] }
+      >;
+    };
+    // Variant fields of ClientCommand are NOT renamed: snake_case on the wire.
+    expect(stream.$defs["frame.ack"]?.required).toEqual(["type", "frame_id"]);
+    expect(stream.$defs["tab.activate"]?.required).toEqual(["type", "tab_id"]);
+    // Payload structs use camelCase (rename_all = "camelCase").
+    for (const name of ["input.mouse", "input.wheel", "input.key", "input.text", "viewport.resize"]) {
+      expect(stream.$defs[name]?.required).toEqual(["type", "payload"]);
+    }
+    const mouse = stream.$defs.MouseInput as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    expect(mouse.required).toEqual(["kind", "x", "y"]);
+    expect(mouse.properties).toHaveProperty("clickCount");
+    expect(mouse.properties).not.toHaveProperty("click_count");
+    const viewport = stream.$defs.ViewportSize as { properties?: Record<string, unknown> };
+    expect(viewport.properties).toHaveProperty("deviceScaleFactor");
+  });
+
+  it("mirrors the BrowserState snapshot required fields", () => {
+    const stream = schema("browser-stream.json") as {
+      $defs: Record<string, { required?: string[]; properties?: Record<string, unknown> }>;
+    };
+    const state = stream.$defs.BrowserState;
+    expect(state?.required).toEqual([
+      "installed",
+      "installStatus",
+      "processStatus",
+      "profileId",
+      "panelMode",
+      "panelWidth",
+      "connected",
+      "tabs",
+      "manualControlEnabled",
+      "remoteViewerCount",
+      "pendingApprovals",
+    ]);
+    const event = stream.$defs["browser.state"] as {
+      properties?: { payload?: { $ref?: string } };
+    };
+    expect(event.properties?.payload?.$ref).toBe("#/$defs/BrowserState");
+  });
 });

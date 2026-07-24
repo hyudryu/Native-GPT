@@ -10,13 +10,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from .auth import verify_auth
+from . import ops
+from .auth import BearerAuthMiddleware, verify_auth
 from .config import BridgeConfig, resolve_token
 from .manager import WorkloadManager
+from .mcp_server import MCP_MOUNT_PATH, create_mcp_server
 from .workloads import ComfyUIWorkload, FakeWorkload, OpenVoiceWorkload
 
 logger = logging.getLogger(__name__)
@@ -44,11 +45,22 @@ def create_app(config: BridgeConfig | None = None) -> FastAPI:
 
     manager = build_manager(config)
 
+    # MCP tool layer (streamable-http), mounted into this same app so a
+    # single process serves both /mcp and the REST endpoints.
+    mcp = create_mcp_server(manager, config)
+    # Build the sub-app eagerly so the session manager exists before the
+    # FastAPI lifespan runs (mounted sub-app lifespans do not run
+    # automatically; we drive it ourselves below).
+    mcp_app = mcp.streamable_http_app()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         manager.start_idle_loop()
         logger.info("bridge started (version %s)", BRIDGE_VERSION)
-        yield
+        # The mounted MCP sub-app's lifespan never runs inside FastAPI, so
+        # run its session manager for the app lifetime (documented pattern).
+        async with mcp.session_manager.run():
+            yield
         await manager.shutdown()
 
     app = FastAPI(
@@ -60,8 +72,14 @@ def create_app(config: BridgeConfig | None = None) -> FastAPI:
     )
     app.state.manager = manager
     app.state.config = config
+    app.state.mcp = mcp
 
     _register_routes(app, manager)
+
+    # FastAPI dependencies do NOT apply to mounted sub-apps; enforce the same
+    # bearer-token rules on /mcp via ASGI middleware (shared logic in auth.py).
+    app.add_middleware(BearerAuthMiddleware, path_prefix=MCP_MOUNT_PATH)
+    app.mount(MCP_MOUNT_PATH, mcp_app)
     return app
 
 
@@ -77,7 +95,14 @@ def _register_routes(app: FastAPI, manager: WorkloadManager) -> None:
                 "version": info.version,
                 "description": info.description,
             }
-        return {"version": BRIDGE_VERSION, "workloads": workloads}
+        return {
+            "version": BRIDGE_VERSION,
+            "workloads": workloads,
+            # Additive: lets the desktop "test connection" verify the MCP
+            # tool layer is mounted.
+            "mcp": True,
+            "mcp_path": MCP_MOUNT_PATH,
+        }
 
     @app.get("/workloads")
     async def list_workloads() -> dict[str, Any]:
@@ -144,46 +169,27 @@ def _register_routes(app: FastAPI, manager: WorkloadManager) -> None:
 
     @app.get("/workloads/openvoice/voices")
     async def list_voices() -> dict[str, Any]:
-        wl = manager.get("openvoice")
-        if wl is None or not isinstance(wl, OpenVoiceWorkload):
-            return {"voices": []}
-        # The worker owns the voice registry; proxy its list.
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(f"{wl.base_url}/voices")
-                resp.raise_for_status()
-                return resp.json()
-        except Exception as exc:
-            logger.warning("failed to list voices from openvoice worker: %s", exc)
-            return {"voices": [], "warning": str(exc)}
+        return await ops.list_voices(manager)
 
     @app.post("/workloads/openvoice/voices")
     async def upload_voice(
         name: str = Form(...),  # noqa: B008
         clip: UploadFile = File(...),  # noqa: B008
     ) -> dict[str, Any]:
-        wl = manager.get("openvoice")
-        if wl is None or not isinstance(wl, OpenVoiceWorkload):
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, detail="openvoice workload not available"
-            )
         clip_bytes = await clip.read()
-        result = await wl.register_voice(
+        result = await ops.register_voice(
+            manager,
             name=name,
             clip_bytes=clip_bytes,
             filename=clip.filename or "clip.mp3",
             mime_type=clip.content_type or "audio/mpeg",
         )
+        if result.get("error") == "openvoice workload not available":
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="openvoice workload not available"
+            )
         return result
 
     @app.delete("/workloads/openvoice/voices/{voice_id}")
     async def delete_voice(voice_id: str) -> dict[str, Any]:
-        wl = manager.get("openvoice")
-        if wl is not None and isinstance(wl, OpenVoiceWorkload):
-            try:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    await client.delete(f"{wl.base_url}/voices/{voice_id}")
-            except Exception as exc:
-                # Best-effort: the voice may already be gone on the worker.
-                logger.warning("failed to delete voice %s on worker: %s", voice_id, exc)
-        return {"deleted": voice_id}
+        return await ops.delete_voice(manager, voice_id)

@@ -1,6 +1,7 @@
 @import "@agentgpt/design-system/tokens.css";
 @import "tailwindcss";
 @import "@agentgpt/design-system/theme.css";
+@import "./styles/markdown.css";
 
 html,
 body,
@@ -21,6 +22,17 @@ body {
   outline: var(--ring-width) solid var(--ring-color);
   outline-offset: var(--ring-offset);
   border-radius: var(--radius-sm);
+}
+
+/* Unlayered so it beats the *:focus-visible rule above (Tailwind utilities
+   are layered and would lose to it). */
+.no-focus-ring:focus-visible {
+  outline: none;
+}
+
+/* Keep toggle pills pill-shaped under the global focus radius override. */
+.toggle-switch:focus-visible {
+  border-radius: var(--radius-full);
 }
 
 ::selection {

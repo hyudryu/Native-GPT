@@ -1,6 +1,10 @@
 # ADR-0008: Remote backend host (bridge) for GPU workloads
 
-**Status:** Accepted (2026-07-22)
+**Status:** Accepted (2026-07-22). Amended 2026-07-22 by the bridge MCP design
+(`docs/superpowers/specs/2026-07-22-bridge-mcp-server-design.md`): the bridge
+is now an **MCP server** (streamable-http at `/mcp`) and the agent connects
+directly via Strands' `MCPClient`. Decisions 5 and 6 below are superseded —
+see the amendments inline.
 
 ## Context
 
@@ -64,9 +68,23 @@ Remote Backend Host (bridge, Linux/GPU)
    proxies to the bridge. This keeps auth centralized and allows capability
    gating (structured "unavailable" response when no host is configured).
 
+   **Superseded (2026-07-22, bridge MCP design).** The callback chain
+   (tool.py → `_lib/bridge_client.py` → Rust generation endpoints) was
+   removed. The bridge exposes MCP tools at `/mcp`; the desktop host
+   generates `app-data/mcp_servers.json` from the `remote_hosts` table and
+   the agent-runtime connects with Strands `MCPClient` (bearer token in MCP
+   headers). The desktop still proxies voice management and serves bridge
+   asset bytes via `GET /api/remote-hosts/{host_id}/assets/{token}` so the
+   webview can render them same-origin.
+
 6. **Approval-gated side effects.** `comfyui_generate` and `openvoice_tts`
    set `requires_approval: true`, reusing the existing `HumanInTheLoop`
    approval gate — no new permission system.
+
+   **Superseded (2026-07-22, bridge MCP design).** MCP tools have no
+   `manifest.json`, so they can't carry `requires_approval`; in v1 they run
+   without approval gating (the per-host bearer token is the auth boundary).
+   A per-server approval flag is a documented future enhancement.
 
 ## Consequences
 

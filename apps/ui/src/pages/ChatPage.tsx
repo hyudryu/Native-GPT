@@ -1,14 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router";
+import { Menu } from "@base-ui-components/react/menu";
+import { Select } from "@base-ui-components/react/select";
 import {
+  Brain,
   Check,
   ChevronDown,
   CircleStop,
+  Globe,
   LoaderCircle,
+  Paperclip,
   Plus,
+  Puzzle,
   SendHorizontal,
   ShieldAlert,
+  Target,
+  Wrench,
   X,
 } from "lucide-react";
 import { PROTOCOL_VERSION } from "@agentgpt/protocol-types";
@@ -27,36 +34,36 @@ import {
   useUpdateConversation,
   type EnabledModel,
   type PersistedToolEvent,
-  type RunRef,
 } from "../lib/dataApi";
 import { socket } from "../lib/ws";
+import {
+  EMPTY_LIVE_RUN,
+  useRunStore,
+  type Activity,
+  type ApprovalPrompt,
+  type ToolCallEntry,
+} from "../lib/runStore";
 import { MarkdownMessage, PlainMessage } from "../components/MarkdownMessage";
-
-type Activity = { message: string; source?: string };
-
-type ToolCallStatus = "pending" | "ok" | "error";
-
-type ToolCallEntry = {
-  callId: string;
-  tool: string;
-  input?: unknown;
-  status: ToolCallStatus;
-  summary?: string;
-  data?: unknown;
-  error?: { code: string; message: string } | null;
-};
+import { assetPayload, renderableAssetUrl } from "../lib/assetUrl";
+import { useRemoteHosts } from "../lib/remoteHosts";
+import { startBrowser } from "../features/browser/browserApi";
+import { useBrowserStore } from "../features/browser/browserStore";
 
 /**
- * If a tool result includes generated asset data (from comfyui_generate or
- * openvoice_tts), render the asset inline — an <img> for images/video posters,
- * an <audio> player for audio.
+ * If a tool result includes generated asset data (from the bridge's
+ * comfyui_generate or openvoice_tts MCP tools), render the asset inline — an
+ * <img> for images, a <video> player for video, an <audio> player for audio.
+ * Bridge-direct asset URLs are bearer-protected (and possibly self-signed),
+ * so they're rewritten to the desktop's same-origin proxy route for rendering.
  */
 function AssetPreview({ data }: { data: unknown }) {
-  if (typeof data !== "object" || data === null) return null;
-  const d = data as Record<string, unknown>;
-  const assetUrl = d.asset_url;
-  const kind = d.kind;
-  if (typeof assetUrl !== "string" || !assetUrl) return null;
+  const hosts = useRemoteHosts();
+  const payload = assetPayload(data);
+  if (!payload) return null;
+  const rawUrl = payload.asset_url;
+  const kind = payload.kind;
+  if (typeof rawUrl !== "string" || !rawUrl) return null;
+  const assetUrl = renderableAssetUrl(rawUrl, hosts.data);
   if (kind === "audio") {
     return (
       <div className="mt-2">
@@ -70,7 +77,7 @@ function AssetPreview({ data }: { data: unknown }) {
         {kind === "image" ? (
           <img
             src={assetUrl}
-            alt={(d.prompt as string) ?? "Generated image"}
+            alt={(payload.prompt as string) ?? "Generated image"}
             className="max-h-80 w-full rounded-xl border border-border object-contain"
           />
         ) : (
@@ -81,14 +88,6 @@ function AssetPreview({ data }: { data: unknown }) {
   }
   return null;
 }
-
-/** A pending human-in-the-loop approval prompt for a gated tool call. */
-type ApprovalPrompt = {
-  approvalId: string;
-  tool: string;
-  input?: unknown;
-  prompt: string;
-};
 
 /**
  * Convert a persisted tool-events trace into the same shape the live
@@ -133,11 +132,18 @@ function toolEntriesFromPersisted(events: PersistedToolEvent[]): ToolCallEntry[]
   return [...byCallId.values()];
 }
 
+/** Absolute timestamp shown when hovering a message, e.g. "Jul 22, 2026, 9:41 PM". */
+function formatTimestamp(iso: string): string {
+  const time = new Date(iso);
+  if (Number.isNaN(time.getTime())) return "";
+  return time.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 function ToolCalls({ entries }: { entries: ToolCallEntry[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (entries.length === 0) return null;
   return (
-    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-2xl flex-col gap-1.5">
+    <ul aria-label="Tool calls" className="mr-auto flex w-full max-w-[50.4rem] flex-col gap-1.5">
       {entries.map((entry) => {
         const open = openId === entry.callId;
         const Icon = entry.status === "pending" ? LoaderCircle : entry.status === "ok" ? Check : X;
@@ -202,7 +208,7 @@ function AgentActivity({ activity }: { activity: Activity }) {
     <section
       aria-label="Agent activity"
       aria-live="polite"
-      className="mr-auto w-full max-w-2xl px-1 py-2 text-sm"
+      className="mr-auto w-full max-w-[50.4rem] px-1 py-2 text-sm"
     >
       <p className="text-base leading-relaxed text-fg">{activity.message}</p>
       <div className="mt-3 flex items-center gap-3 text-fg-muted">
@@ -226,7 +232,7 @@ function ApprovalBanner({
   return (
     <section
       aria-label="Approval required"
-      className="mr-auto w-full max-w-2xl rounded-xl border border-warning bg-warning-subtle p-4 text-sm"
+      className="mr-auto w-full max-w-[50.4rem] rounded-xl border border-warning bg-warning-subtle p-4 text-sm"
     >
       <div className="flex items-center gap-2 font-medium text-fg">
         <ShieldAlert className="size-4 shrink-0 text-warning" aria-hidden />
@@ -284,31 +290,258 @@ function ModelPicker({
     return result;
   }, [models]);
 
+  const labels = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const model of models) result.set(modelOptionValue(model), model.model_id);
+    return result;
+  }, [models]);
+
   return (
-    <label className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+    <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
       <span className="shrink-0">Model</span>
-      <select
-        aria-label="Conversation model"
+      <Select.Root
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onValueChange={(next) => next !== null && onChange(next)}
         disabled={disabled || models.length === 0}
-        className="min-h-11 min-w-0 max-w-64 rounded-xl border border-border bg-surface-1 px-3 font-mono text-xs text-fg disabled:opacity-60"
       >
-        {models.length === 0 ? (
-          <option value="">No enabled models</option>
-        ) : (
-          [...groups.entries()].map(([provider, entries]) => (
-            <optgroup key={provider} label={provider}>
-              {entries.map((model) => (
-                <option key={modelOptionValue(model)} value={modelOptionValue(model)}>
-                  {model.model_id}
-                </option>
+        <Select.Trigger
+          aria-label="Conversation model"
+          className="flex min-h-11 min-w-0 max-w-64 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3 font-mono text-xs text-fg transition-colors duration-150 hover:bg-surface-2 disabled:opacity-60"
+        >
+          <Select.Value className="min-w-0 flex-1 truncate text-left">
+            {(current: string) =>
+              models.length === 0 ? "No enabled models" : (labels.get(current) ?? "Select model")
+            }
+          </Select.Value>
+          <Select.Icon className="shrink-0 text-fg-subtle">
+            <ChevronDown className="size-4" aria-hidden />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Positioner side="top" align="start" sideOffset={6} alignItemWithTrigger={false} className="z-50">
+            <Select.Popup className="max-h-72 min-w-56 overflow-y-auto rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              {[...groups.entries()].map(([provider, entries]) => (
+                <Select.Group key={provider}>
+                  <Select.GroupLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+                    {provider}
+                  </Select.GroupLabel>
+                  {entries.map((model) => (
+                    <Select.Item
+                      key={modelOptionValue(model)}
+                      value={modelOptionValue(model)}
+                      className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 font-mono text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                    >
+                      <Select.ItemIndicator className="inline-flex w-4 shrink-0 items-center text-accent">
+                        <Check className="size-3.5" aria-hidden />
+                      </Select.ItemIndicator>
+                      <Select.ItemText className="truncate">{model.model_id}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Group>
               ))}
-            </optgroup>
-          ))
-        )}
-      </select>
-    </label>
+            </Select.Popup>
+          </Select.Positioner>
+        </Select.Portal>
+      </Select.Root>
+    </div>
+  );
+}
+
+// ── Thinking level ───────────────────────────────────────────────────────────
+// UI-only for now: the level is persisted locally (new sessions default to the
+// last selection) but is not yet forwarded to the agent runtime.
+
+type ThinkingLevel = "low" | "medium" | "high";
+
+const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high"];
+const THINKING_LEVEL_STORAGE_KEY = "agentgpt.thinkingLevel";
+
+function loadThinkingLevel(): ThinkingLevel {
+  try {
+    const stored = window.localStorage.getItem(THINKING_LEVEL_STORAGE_KEY);
+    if (stored === "low" || stored === "medium" || stored === "high") return stored;
+  } catch {
+    // Storage unavailable (private mode, etc.) — fall through to the default.
+  }
+  return "medium";
+}
+
+function useThinkingLevel(): [ThinkingLevel, (level: ThinkingLevel) => void] {
+  const [level, setLevel] = useState<ThinkingLevel>(loadThinkingLevel);
+  const update = (next: ThinkingLevel) => {
+    setLevel(next);
+    try {
+      window.localStorage.setItem(THINKING_LEVEL_STORAGE_KEY, next);
+    } catch {
+      // Storage unavailable — keep the in-memory selection only.
+    }
+  };
+  return [level, update];
+}
+
+function thinkingLevelLabel(level: ThinkingLevel): string {
+  return level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+function ThinkingLevelPicker({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: ThinkingLevel;
+  onChange: (value: ThinkingLevel) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+      <Select.Root
+        value={value}
+        onValueChange={(next) => next !== null && onChange(next as ThinkingLevel)}
+        disabled={disabled}
+      >
+        <Select.Trigger
+          aria-label="Thinking level"
+          className="flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3 text-xs text-fg transition-colors duration-150 hover:bg-surface-2 disabled:opacity-60"
+        >
+          <Brain className="size-4 shrink-0 text-fg-subtle" aria-hidden />
+          <Select.Value className="min-w-0 flex-1 truncate text-left">
+            {(current: ThinkingLevel) => thinkingLevelLabel(current)}
+          </Select.Value>
+          <Select.Icon className="shrink-0 text-fg-subtle">
+            <ChevronDown className="size-4" aria-hidden />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Positioner side="top" align="end" sideOffset={6} alignItemWithTrigger={false} className="z-50">
+            <Select.Popup className="min-w-36 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              {THINKING_LEVELS.map((level) => (
+                <Select.Item
+                  key={level}
+                  value={level}
+                  className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-xs text-fg-muted data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg"
+                >
+                  <Select.ItemIndicator className="inline-flex w-4 shrink-0 items-center text-accent">
+                    <Check className="size-3.5" aria-hidden />
+                  </Select.ItemIndicator>
+                  <Select.ItemText className="truncate">{thinkingLevelLabel(level)}</Select.ItemText>
+                </Select.Item>
+              ))}
+            </Select.Popup>
+          </Select.Positioner>
+        </Select.Portal>
+      </Select.Root>
+    </div>
+  );
+}
+
+// ── Composer "+" menu ────────────────────────────────────────────────────────
+
+function PlusMenu({
+  onAddFiles,
+  disabled = false,
+}: {
+  onAddFiles: (files: File[]) => void;
+  disabled?: boolean;
+}) {
+  const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const itemClass =
+    "flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm text-fg-muted outline-none data-[highlighted]:bg-surface-2 data-[highlighted]:text-fg data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50";
+
+  /** Open the browser panel at a 50/50 split; warm up Chromium if installed. */
+  const openBrowserPanel = () => {
+    const s = useBrowserStore.getState();
+    s.setSplitWidth(s.containerWidth > 0 ? s.containerWidth * 0.5 : 640);
+    if (s.installStatus === "ready" && s.processStatus === "stopped") {
+      // Fire-and-forget — the viewport surfaces install/start errors itself.
+      startBrowser().catch(() => {});
+    }
+  };
+  return (
+    <>
+      <Menu.Root>
+        <Menu.Trigger
+          aria-label="Add to message"
+          disabled={disabled}
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl text-fg-subtle transition-colors duration-150 hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus className="size-5" aria-hidden />
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Positioner side="top" align="start" sideOffset={6} className="z-50">
+            <Menu.Popup className="min-w-44 rounded-xl border border-border bg-surface-3 p-1 shadow-lg">
+              <Menu.Item className={itemClass} onClick={() => fileInputRef.current?.click()}>
+                <Paperclip className="size-4 shrink-0" aria-hidden />
+                Add file
+              </Menu.Item>
+              <Menu.Item className={itemClass} onClick={openBrowserPanel}>
+                <Globe className="size-4 shrink-0" aria-hidden />
+                Browser
+              </Menu.Item>
+              <Menu.Item className={itemClass} onClick={() => navigate("/apps/tools")}>
+                <Wrench className="size-4 shrink-0" aria-hidden />
+                Tools
+              </Menu.Item>
+              <Menu.Item className={itemClass} disabled>
+                <Puzzle className="size-4 shrink-0" aria-hidden />
+                Plugins
+                <span className="ml-auto text-[10px] uppercase tracking-wide text-fg-subtle">Soon</span>
+              </Menu.Item>
+              <Menu.Item className={itemClass} disabled>
+                <Target className="size-4 shrink-0" aria-hidden />
+                Add Goal
+                <span className="ml-auto text-[10px] uppercase tracking-wide text-fg-subtle">Soon</span>
+              </Menu.Item>
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        aria-hidden
+        tabIndex={-1}
+        onChange={(event) => {
+          const selected = event.target.files ? [...event.target.files] : [];
+          if (selected.length > 0) onAddFiles(selected);
+          // Reset so picking the same file twice still fires onChange.
+          event.target.value = "";
+        }}
+      />
+    </>
+  );
+}
+
+function AttachmentChips({
+  files,
+  onRemove,
+}: {
+  files: File[];
+  onRemove: (index: number) => void;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <ul aria-label="Attached files" className="flex flex-wrap gap-1.5 px-1 pt-1">
+      {files.map((file, index) => (
+        <li
+          key={`${file.name}-${index}`}
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-xs text-fg"
+        >
+          <Paperclip className="size-3 shrink-0 text-fg-subtle" aria-hidden />
+          <span className="max-w-40 truncate">{file.name}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            aria-label={`Remove ${file.name}`}
+            className="shrink-0 text-fg-subtle hover:text-danger"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -318,6 +551,8 @@ function NewConversation() {
   const create = useCreateConversation();
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
 
   useEffect(() => {
     const available = models.data ?? [];
@@ -358,7 +593,7 @@ function NewConversation() {
       <form
         aria-label="New conversation composer"
         onSubmit={submit}
-        className="mx-auto flex w-full max-w-2xl flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
+        className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
       >
         <textarea
           rows={2}
@@ -373,23 +608,27 @@ function NewConversation() {
           autoFocus
           placeholder="Ask Native GPT"
           aria-label="Message"
-          className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg placeholder:text-fg-subtle"
+          className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle"
+        />
+        <AttachmentChips
+          files={files}
+          onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
         />
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            disabled
-            title="Attachments (coming soon)"
-            aria-label="Attachments (coming soon)"
-            className="inline-flex min-h-11 min-w-11 cursor-not-allowed items-center justify-center rounded-xl text-fg-subtle/50"
-          >
-            <Plus className="size-5" aria-hidden />
-          </button>
+          <PlusMenu
+            onAddFiles={(added) => setFiles((current) => [...current, ...added])}
+            disabled={create.isPending}
+          />
           <div className="flex-1" />
           <ModelPicker
             models={models.data ?? []}
             value={selectedModel}
             onChange={setSelectedModel}
+            disabled={create.isPending}
+          />
+          <ThinkingLevelPicker
+            value={thinkingLevel}
+            onChange={setThinkingLevel}
             disabled={create.isPending}
           />
           <button
@@ -407,7 +646,7 @@ function NewConversation() {
         </div>
       </form>
       {models.isSuccess && models.data.length === 0 && (
-        <p role="status" className="max-w-2xl text-center text-xs text-warning">
+        <p role="status" className="max-w-[50.4rem] text-center text-xs text-warning">
           No models are enabled. Enable one in Settings → Providers.
         </p>
       )}
@@ -427,7 +666,6 @@ function NewConversation() {
 
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-  const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
   const conversation = useConversation(conversationId);
@@ -439,12 +677,17 @@ export default function ChatPage() {
   const cancel = useCancelRun();
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
-  const [activeRun, setActiveRun] = useState<RunRef | null>(null);
-  const [streamText, setStreamText] = useState("");
-  const [activity, setActivity] = useState<Activity>({ message: "Thinking through the request" });
-  const [streamError, setStreamError] = useState<string | null>(null);
-  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
-  const [approval, setApproval] = useState<ApprovalPrompt | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
+  // Live agent-run state is per conversation in the global store, so
+  // navigating away mid-run never leaks one conversation's run into another.
+  const live = useRunStore((s) =>
+    conversationId ? (s.byConversation[conversationId] ?? EMPTY_LIVE_RUN) : EMPTY_LIVE_RUN,
+  );
+  const startRun = useRunStore((s) => s.startRun);
+  const stopRun = useRunStore((s) => s.stopRun);
+  const clearApproval = useRunStore((s) => s.clearApproval);
+  const { activeRun, streamText, activity, streamError, toolCalls, approval } = live;
   const autoSentRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -465,18 +708,16 @@ export default function ChatPage() {
     if (!model) return;
     autoSentRef.current = true;
     if (state.modelValue) setSelectedModel(state.modelValue);
-    setStreamText("");
-    setStreamError(null);
     send.mutate(
       {
         content: state.firstMessage,
         endpoint_id: model.provider_id,
         model_id: model.model_id,
       },
-      { onSuccess: ({ run }) => setActiveRun(run) },
+      { onSuccess: ({ run }) => startRun(conversationId, run) },
     );
     navigate(location.pathname, { replace: true, state: null });
-  }, [location, conversationId, messages.isPending, messages.data, navigate, send]);
+  }, [location, conversationId, messages.isPending, messages.data, navigate, send, startRun]);
 
   useEffect(() => {
     const available = enabledModels.data ?? [];
@@ -500,119 +741,9 @@ export default function ChatPage() {
     });
   }, [conversation.data, enabledModels.data, projects.data]);
 
-  useEffect(() => {
-    if (!activeRun || !conversationId) return;
-    // Fresh run — clear the previous run's tool trace.
-    setToolCalls([]);
-    const matches = (requestId: string, payload: Record<string, unknown>) =>
-      requestId === activeRun.request_id || payload.run_id === activeRun.id;
-    const offDelta = socket.on("run.text_delta", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.text !== "string") return;
-      setStreamText((current) => current + payload.text);
-    });
-    const offActivity = socket.on("run.activity", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.message !== "string") return;
-      setActivity({
-        message: payload.message,
-        ...(typeof payload.source === "string" ? { source: payload.source } : {}),
-      });
-    });
-    const offToolCall = socket.on("run.tool_call", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const tool = typeof payload.tool === "string" ? payload.tool : "tool";
-      const input = payload.input;
-      setToolCalls((current) => {
-        if (current.some((entry) => entry.callId === callId)) return current;
-        return [
-          ...current,
-          { callId, tool, input, status: "pending" as ToolCallStatus },
-        ];
-      });
-    });
-    const offToolResult = socket.on("run.tool_result", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.call_id !== "string") return;
-      const callId = payload.call_id;
-      const ok = payload.ok === true;
-      const summary = typeof payload.summary === "string" ? payload.summary : undefined;
-      const data = payload.data;
-      const error = (payload.error ?? null) as { code: string; message: string } | null;
-      setToolCalls((current) =>
-        current.map((entry) =>
-          entry.callId === callId
-            ? {
-                ...entry,
-                status: ok ? "ok" : ("error" as ToolCallStatus),
-                summary,
-                data,
-                error,
-              }
-            : entry,
-        ),
-      );
-    });
-    const offApprovalNeeded = socket.on("run.approval_needed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      const next: ApprovalPrompt = {
-        approvalId: payload.approval_id,
-        tool: typeof payload.tool === "string" ? payload.tool : "tool",
-        input: payload.input,
-        prompt:
-          typeof payload.prompt === "string" ? payload.prompt : "Approve this tool call?",
-      };
-      setApproval((current) => {
-        // Strands runs tools sequentially, so a second prompt means the first
-        // was orphaned (e.g. its resolution event was missed) — replace it.
-        if (current) {
-          console.warn(`replacing unresolved approval ${current.approvalId}`);
-        }
-        return next;
-      });
-    });
-    const offApprovalResolved = socket.on("run.approval_resolved", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload) || typeof payload.approval_id !== "string") return;
-      setApproval((current) =>
-        current && current.approvalId === payload.approval_id ? null : current,
-      );
-    });
-    const offCompleted = socket.on("run.completed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      setActiveRun(null);
-      setApproval(null);
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    const offFailed = socket.on("run.failed", (envelope) => {
-      const payload = envelope.payload as Record<string, unknown>;
-      if (!matches(envelope.request_id, payload)) return;
-      const error = payload.error as { message?: string } | undefined;
-      setStreamError(error?.message ?? "The response failed.");
-      setActiveRun(null);
-      setApproval(null);
-      // The host persists any partial assistant text on failure/cancel — refetch.
-      void queryClient
-        .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-        .then(() => setStreamText(""));
-    });
-    return () => {
-      offDelta();
-      offActivity();
-      offToolCall();
-      offToolResult();
-      offApprovalNeeded();
-      offApprovalResolved();
-      offCompleted();
-      offFailed();
-    };
-  }, [activeRun, conversationId, queryClient]);
+  // run.* WS events are handled by the global router in lib/runStore.ts,
+  // which dispatches each event to the slice of the conversation that owns
+  // the run — no per-page subscription needed here.
 
   // ── Auto-scroll to bottom ──────────────────────────────────────────────────
 
@@ -709,7 +840,7 @@ export default function ChatPage() {
       timestamp: new Date().toISOString(),
       payload: { approval_id: approval.approvalId, approved },
     });
-    setApproval(null);
+    clearApproval(conversationId);
   };
 
   const submit = (event: React.FormEvent) => {
@@ -718,9 +849,6 @@ export default function ChatPage() {
     const model = parseModelOptionValue(selectedModel);
     if (!content || activeRun || send.isPending || !model) return;
     setDraft("");
-    setStreamText("");
-    setActivity({ message: "Thinking through the request" });
-    setStreamError(null);
     // Always send the picker selection with the message so the model the user
     // sees is the model that runs — even if the conversation row still holds a
     // stale or since-disabled model (the PATCH in chooseModel may not have
@@ -732,7 +860,9 @@ export default function ChatPage() {
         model_id: model.model_id,
       },
       {
-        onSuccess: ({ run }) => setActiveRun(run),
+        // Register the run against the conversation it was SENT to — the user
+        // may have navigated elsewhere before this response arrives.
+        onSuccess: ({ run }) => startRun(conversationId, run),
         onError: () => setDraft(content),
       },
     );
@@ -762,7 +892,7 @@ export default function ChatPage() {
         className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
         aria-busy={messages.isPending}
       >
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-4">
           {messages.isPending && (
             <p className="flex items-center gap-2 text-sm text-fg-muted">
               <LoaderCircle className="size-4 animate-spin" aria-hidden /> Loading messages…
@@ -789,31 +919,43 @@ export default function ChatPage() {
             return (
               <div key={message.id} className="contents">
                 {historicalToolCalls.length > 0 && <ToolCalls entries={historicalToolCalls} />}
-                <article
-                  aria-label={`${message.role} message`}
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    user
-                      ? "ml-auto rounded-br-md bg-accent text-accent-contrast"
-                      : "mr-auto rounded-bl-md border border-border bg-surface-1 text-fg"
-                  }`}
-                >
-                  {user
-                    ? <PlainMessage content={text} />
-                    : <MarkdownMessage content={text} />}
-                </article>
+                <div className={`group flex flex-col ${user ? "items-end" : "items-start"}`}>
+                  <article
+                    aria-label={`${message.role} message`}
+                    className={
+                      user
+                        ? "max-w-[85%] whitespace-pre-wrap rounded-sm rounded-br-none bg-accent px-4 py-3 text-sm leading-relaxed text-accent-contrast"
+                        : "w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
+                    }
+                  >
+                    {user
+                      ? <PlainMessage content={text} />
+                      : <MarkdownMessage content={text} />}
+                  </article>
+                  {message.created_at && (
+                    <time
+                      dateTime={message.created_at}
+                      className="mt-0.5 px-1 text-[11px] text-fg-subtle opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                    >
+                      {formatTimestamp(message.created_at)}
+                    </time>
+                  )}
+                </div>
               </div>
             );
           })}
           {activeRun && <ToolCalls entries={toolCalls} />}
           {activeRun && approval && <ApprovalBanner approval={approval} onDecide={decideApproval} />}
-          {activeRun && !approval && !streamText && <AgentActivity activity={activity} />}
+          {(send.isPending || activeRun) && !approval && !streamText && (
+            <AgentActivity activity={send.isPending ? { message: "Sending…" } : activity} />
+          )}
           {streamText && (
             <article
               aria-label="assistant message streaming"
               aria-live="polite"
-              className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-md border border-border bg-surface-1 px-4 py-3 text-sm leading-relaxed text-fg"
+              className="w-full whitespace-pre-wrap py-1 text-sm leading-relaxed text-fg"
             >
-              {streamText ? <PlainMessage content={streamText} /> : <span className="text-fg-subtle">Thinking…</span>}
+              <MarkdownMessage content={streamText} />
             </article>
           )}
           {(streamError || send.isError) && (
@@ -829,69 +971,77 @@ export default function ChatPage() {
 
       <div className="px-4 pb-4 sm:px-6" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)" }}>
         {enabledModels.isSuccess && enabledModels.data.length === 0 && (
-          <p role="status" className="mx-auto mb-2 max-w-2xl text-xs text-warning">
+          <p role="status" className="mx-auto mb-2 max-w-[50.4rem] text-xs text-warning">
             No models are enabled. Enable one in Settings → Providers.
           </p>
         )}
         <form
           aria-label="Message composer"
           onSubmit={submit}
-          className="mx-auto flex w-full max-w-2xl items-end gap-2 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
+          className="mx-auto flex w-full max-w-[50.4rem] flex-col gap-1 rounded-2xl border border-border bg-surface-1 p-2 shadow-md"
         >
-          <textarea
-            rows={1}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            disabled={Boolean(activeRun)}
-            placeholder="Message Native GPT"
-            aria-label="Message"
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg placeholder:text-fg-subtle disabled:opacity-60"
+          <AttachmentChips
+            files={files}
+            onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))}
           />
-          {activeRun ? (
-            <button
-              type="button"
-              onClick={() =>
-                cancel.mutate(activeRun.id, {
-                  onSuccess: () => {
-                    setActiveRun(null);
-                    setStreamError("Response stopped.");
-                    // Partial assistant text is persisted on cancel — refetch.
-                    void queryClient
-                      .invalidateQueries({ queryKey: ["conversations", conversationId, "messages"] })
-                      .then(() => setStreamText(""));
-                  },
-                })
-              }
-              disabled={cancel.isPending}
-              aria-label="Stop response"
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-border text-danger hover:bg-danger-subtle disabled:opacity-50"
-            >
-              {cancel.isPending ? (
-                <LoaderCircle className="size-5 animate-spin" aria-hidden />
-              ) : (
-                <CircleStop className="size-5" aria-hidden />
-              )}
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!draft.trim() || !selectedModel || send.isPending}
-              aria-label="Send message"
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-accent text-accent-contrast hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {send.isPending ? (
-                <LoaderCircle className="size-5 animate-spin" aria-hidden />
-              ) : (
-                <SendHorizontal className="size-5" aria-hidden />
-              )}
-            </button>
-          )}
+          <div className="flex items-end gap-1">
+            <PlusMenu
+              onAddFiles={(added) => setFiles((current) => [...current, ...added])}
+              disabled={Boolean(activeRun)}
+            />
+            <textarea
+              rows={1}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              disabled={Boolean(activeRun)}
+              placeholder="Message Native GPT"
+              aria-label="Message"
+              className="max-h-40 min-h-11 flex-1 resize-none rounded-xl bg-transparent px-3 py-2.5 text-base text-fg no-focus-ring placeholder:text-fg-subtle disabled:opacity-60"
+            />
+            <ThinkingLevelPicker
+              value={thinkingLevel}
+              onChange={setThinkingLevel}
+              disabled={Boolean(activeRun)}
+            />
+            {activeRun ? (
+              <button
+                type="button"
+                onClick={() =>
+                  cancel.mutate(activeRun.id, {
+                    onSuccess: () => stopRun(conversationId),
+                  })
+                }
+                disabled={cancel.isPending}
+                aria-label="Stop response"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-border text-danger hover:bg-danger-subtle disabled:opacity-50"
+              >
+                {cancel.isPending ? (
+                  <LoaderCircle className="size-5 animate-spin" aria-hidden />
+                ) : (
+                  <CircleStop className="size-5" aria-hidden />
+                )}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!draft.trim() || !selectedModel || send.isPending}
+                aria-label="Send message"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-accent text-accent-contrast hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {send.isPending ? (
+                  <LoaderCircle className="size-5 animate-spin" aria-hidden />
+                ) : (
+                  <SendHorizontal className="size-5" aria-hidden />
+                )}
+              </button>
+            )}
+          </div>
         </form>
       </div>
     </div>

@@ -10,7 +10,6 @@ import BrainPage from "./pages/BrainPage";
 import KnowledgeDumpPage from "./pages/KnowledgeDumpPage";
 import ToolsPage from "./pages/ToolsPage";
 import ToolFactoryPage from "./pages/ToolFactoryPage";
-import UpdatesPage from "./pages/UpdatesPage";
 
 export default function App() {
   useDataChangedSync();
@@ -29,7 +28,6 @@ export default function App() {
           <Route path="apps/tools" element={<ToolsPage />} />
           <Route path="apps/tools/factory" element={<ToolFactoryPage />} />
           <Route path="apps/tools/factory/:toolId" element={<ToolFactoryPage />} />
-          <Route path="apps/updates" element={<UpdatesPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

@@ -6,10 +6,13 @@ import pytest
 
 from agentgpt_runtime.chat import (
     ChatRuns,
+    DEFAULT_SYSTEM_PROMPT,
+    GROUNDING_DIRECTIVE,
     activity_from_event,
     approval_allowed_tools,
     build_openai_model,
     openai_base_url,
+    resolve_system_prompt,
     strands_messages,
     usage_from_result,
 )
@@ -90,6 +93,51 @@ def test_tool_use_event_becomes_a_concise_activity_update() -> None:
         "source": "github_search",
     }
     assert activity_from_event({"data": "answer text"}) is None
+
+
+# --- resolve_system_prompt: grounding directive + hallucination guard ---
+
+
+def test_resolve_system_prompt_uses_default_without_web_search() -> None:
+    payload = _run_payload(enabled_tools=["calculate", "read-file"])
+    assert resolve_system_prompt(payload) == DEFAULT_SYSTEM_PROMPT
+
+
+def test_resolve_system_prompt_appends_grounding_when_web_search_enabled() -> None:
+    payload = _run_payload(enabled_tools=["calculate", "web-search", "read-file"])
+    assert resolve_system_prompt(payload) == f"{DEFAULT_SYSTEM_PROMPT}\n{GROUNDING_DIRECTIVE}"
+
+
+def test_resolve_system_prompt_explicit_prompt_wins() -> None:
+    payload = _run_payload(
+        system_prompt="Custom host prompt.",
+        enabled_tools=["web-search"],
+    )
+    assert resolve_system_prompt(payload) == "Custom host prompt."
+
+
+def test_resolve_system_prompt_factory_mode_uses_factory_prompt() -> None:
+    # Factory runs must NOT get the grounding directive: they expose no normal
+    # tools (web-search included), so it would be a false instruction.
+    payload = _run_payload(factory_mode=True, enabled_tools=["web-search"])
+    from agentgpt_runtime.tools.factory import FACTORY_SYSTEM_PROMPT
+
+    assert resolve_system_prompt(payload) == FACTORY_SYSTEM_PROMPT
+    assert GROUNDING_DIRECTIVE not in resolve_system_prompt(payload)
+
+
+def test_default_prompt_forbids_invented_tools_and_cites_critical_thinking() -> None:
+    """The prompt must explicitly deny the hallucinated tools. If a user pastes
+    the critical-thinking design doc, the system prompt must override it."""
+    assert "Critical Thinking" in DEFAULT_SYSTEM_PROMPT
+    assert "agentic loop" in DEFAULT_SYSTEM_PROMPT
+    assert "not present in your tool list" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_grounding_directive_names_web_search_tool() -> None:
+    assert "web_search" in GROUNDING_DIRECTIVE
+    assert "before you write your answer" in GROUNDING_DIRECTIVE
+
 
 
 # --- build_openai_model: tls_verify ---
